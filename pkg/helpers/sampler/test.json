@@ -1,0 +1,6 @@
+{
+  "brokerUrl": "tcp://broker.emqx.io:1883",
+  "topic": "garden_monitor/861275073104248",
+  "clientIdPrefix": "illmade-broker-001",
+  "insecure_skip_verify": true
+}
