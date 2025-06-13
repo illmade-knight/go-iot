@@ -8,7 +8,6 @@ require (
 	cloud.google.com/go/pubsub v1.49.0
 	cloud.google.com/go/storage v1.55.0
 	github.com/eclipse/paho.mqtt.golang v1.5.0
-	github.com/illmade-knight/ai-power-mvp/gen/go/protos/telemetry v0.0.0-20250609090345-5c9523977e29
 	github.com/rs/zerolog v1.34.0
 	github.com/stretchr/testify v1.10.0
 	github.com/testcontainers/testcontainers-go v0.37.0
