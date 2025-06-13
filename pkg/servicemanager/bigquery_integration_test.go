@@ -5,9 +5,10 @@ package servicemanager
 import (
 	"context"
 	"fmt"
-	telemetry "github.com/illmade-knight/ai-power-mvp/gen/go/protos/telemetry"
+	telemetry "github.com/illmade-knight/go-iot/gen/go/protos/telemetry"
 	"net/http"
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -131,19 +132,43 @@ func setupBigQueryEmulatorForManagerTest(t *testing.T, ctx context.Context) (emu
 	return emulatorGRPCHost, emulatorRESTHost, func() { require.NoError(t, container.Terminate(ctx)) }
 }
 
-// createManagerTestYAMLFile is assumed to be defined in another _test.go file
-// within the same 'servicemanager' package.
-/*
-import "path/filepath"
-func createManagerTestYAMLFile(t *testing.T, content string) string {
+// CreateManagerTestYAMLFile creates a temporary YAML file with the given content
+// for testing purposes. It creates a temporary directory that is automatically
+// cleaned up after the test completes.
+//
+// t: The testing.T instance for the current test.
+// content: A string containing the YAML configuration to be written to the file.
+//
+// Returns the file path of the newly created temporary YAML file.
+func CreateManagerTestYAMLFile(t *testing.T, content string) string {
+	// t.Helper() marks this function as a test helper. This allows the test
+	// runner to report the line number of the actual test failure, rather than
+	// the line inside this helper function.
 	t.Helper()
+
+	// t.TempDir() creates a new temporary directory and returns its path.
+	// The test framework automatically removes the directory and its contents
+	// when the test and all its subtests complete.
 	tmpDir := t.TempDir()
-	filePath := filepath.Join(tmpDir, "manager_test_config_bq_sm.yaml")
+
+	// filepath.Join combines the temporary directory path and the desired
+	// filename into a clean, OS-independent path.
+	filePath := filepath.Join(tmpDir, "manager_test_config.yaml")
+
+	// os.WriteFile writes the provided content string (as a byte slice) to the
+	// specified file path. The 0600 permission ensures the file is readable
+	// and writable only by the current user.
 	err := os.WriteFile(filePath, []byte(content), 0600)
+
+	// require.NoError is a testify assertion that fails the test immediately
+	// if the error is not nil. This is appropriate here because the test cannot
+	// proceed if the config file cannot be created.
 	require.NoError(t, err, "Failed to write temporary manager YAML file")
+
+	// Return the path to the newly created file so it can be used to load the
+	// configuration.
 	return filePath
 }
-*/
 
 func TestBigQueryManager_Integration_SetupAndTeardown(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
@@ -193,7 +218,7 @@ resources:
 		testSMBQDatasetID, testSMBQAnotherDatasetID,
 		testSMBQTableID, testSMBQDatasetID, yamlTimePartitioningField, yamlClusteringFields[0], yamlClusteringFields[1])
 
-	configFilePath := createManagerTestYAMLFile(t, yamlContent) // Assumes this helper is available in the package
+	configFilePath := CreateManagerTestYAMLFile(t, yamlContent) // Assumes this helper is available in the package
 
 	cfg, err := LoadAndValidateConfig(configFilePath)
 	require.NoError(t, err, "Failed to load and validate test config")

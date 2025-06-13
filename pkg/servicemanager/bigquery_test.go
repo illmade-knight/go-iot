@@ -12,7 +12,7 @@ import (
 	"testing"
 
 	// Import your generated protobuf package
-	telemetry "github.com/illmade-knight/ai-power-mvp/gen/go/protos/telemetry"
+	telemetry "github.com/illmade-knight/go-iot/gen/go/protos/telemetry"
 )
 
 // --- Mock Implementations for BQClient, BQDataset, BQTable interfaces ---

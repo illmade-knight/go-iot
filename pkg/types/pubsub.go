@@ -4,7 +4,6 @@ import (
 	"time"
 )
 
-// broker like Google Pub/Sub. It contains the raw, unprocessed payload.
 type ConsumedMessage struct {
 	// ID is the unique identifier for the message from the source broker.
 	ID string

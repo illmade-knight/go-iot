@@ -7,9 +7,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/illmade-knight/ai-power-mpv/pkg/bqstore"
-	//"github.com/illmade-knight/ai-power-mpv/pkg/consumers"
-	"github.com/illmade-knight/ai-power-mpv/pkg/types"
+	"github.com/illmade-knight/go-iot/pkg/bqstore"
+	"github.com/illmade-knight/go-iot/pkg/types"
 	"github.com/rs/zerolog"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"

@@ -5,7 +5,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/illmade-knight/ai-power-mpv/pkg/types" // Uses the shared types package
+	"github.com/illmade-knight/go-iot/pkg/types" // Uses the shared types package
 	"github.com/rs/zerolog"
 )
 

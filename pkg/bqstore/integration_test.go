@@ -8,7 +8,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"github.com/illmade-knight/ai-power-mpv/pkg/types"
+	"github.com/illmade-knight/go-iot/pkg/types"
 	"io"
 	"net/http"
 	"os"
@@ -19,9 +19,9 @@ import (
 
 	"cloud.google.com/go/bigquery"
 	"cloud.google.com/go/pubsub"
-	"github.com/illmade-knight/ai-power-mpv/pkg/bqstore"
-	"github.com/illmade-knight/ai-power-mpv/pkg/consumers" // Using shared consumers package
-	//"github.com/illmade-knight/ai-power-mpv/pkg/types"    // Using shared types package
+	"github.com/illmade-knight/go-iot/pkg/bqstore"
+	"github.com/illmade-knight/go-iot/pkg/consumers" // Using shared consumers package
+	//"github.com/illmade-knight/go-iot/pkg/types"    // Using shared types package
 	"github.com/rs/zerolog"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"

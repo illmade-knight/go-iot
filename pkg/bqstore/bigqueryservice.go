@@ -5,7 +5,7 @@ import (
 	"context"
 	"fmt"
 
-	"github.com/illmade-knight/ai-power-mpv/pkg/consumers"
+	"github.com/illmade-knight/go-iot/pkg/consumers"
 	"github.com/rs/zerolog"
 )
 

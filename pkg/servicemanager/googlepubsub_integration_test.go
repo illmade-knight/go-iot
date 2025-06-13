@@ -5,7 +5,7 @@ package servicemanager_test
 import (
 	"context"
 	"fmt"
-	"github.com/illmade-knight/ai-power-mpv/pkg/servicemanager"
+	"github.com/illmade-knight/go-iot/pkg/servicemanager"
 	"github.com/testcontainers/testcontainers-go"
 	"io"
 	"os"

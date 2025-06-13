@@ -3,8 +3,8 @@ package bqstore_test
 import (
 	"context"
 	"errors"
-	"github.com/illmade-knight/ai-power-mpv/pkg/bqstore"
-	"github.com/illmade-knight/ai-power-mpv/pkg/types"
+	"github.com/illmade-knight/go-iot/pkg/bqstore"
+	"github.com/illmade-knight/go-iot/pkg/types"
 	"sync"
 	"testing"
 	"time"

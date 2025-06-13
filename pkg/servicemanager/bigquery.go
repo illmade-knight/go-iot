@@ -4,7 +4,7 @@ import (
 	"cloud.google.com/go/bigquery"
 	"context"
 	"fmt"
-	telemetry "github.com/illmade-knight/ai-power-mvp/gen/go/protos/telemetry"
+	telemetry "github.com/illmade-knight/go-iot/gen/go/protos/telemetry"
 	"github.com/rs/zerolog"
 	"google.golang.org/api/option"
 

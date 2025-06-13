@@ -6,7 +6,7 @@ import "google/protobuf/timestamp.proto";
 
 // Go package option updated for your repository structure.
 // This will generate Go code in a package named 'telemetrypb'
-// under 'github.com/illmade-knight/ai-power-mvp/gen/go/protos/telemetry'.
+// under 'github.com/illmade-knight/go-iot/gen/go/protos/telemetry'.
 // Adjust the path and package name if your preferred output structure is different.
 option go_package = "github.com/illmade-knight/go-iot/gen/go/protos/telemetry;telemetrypb";
 

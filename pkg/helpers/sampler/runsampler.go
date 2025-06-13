@@ -5,7 +5,7 @@ import (
 	"encoding/json"
 	"flag"
 	"fmt"
-	"github.com/illmade-knight/ai-power-mpv/pkg/mqttconverter"
+	"github.com/illmade-knight/go-iot/pkg/mqttconverter"
 	"os"
 	"time"
 

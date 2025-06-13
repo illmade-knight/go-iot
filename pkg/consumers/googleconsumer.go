@@ -5,7 +5,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"github.com/illmade-knight/ai-power-mpv/pkg/types"
+	"github.com/illmade-knight/go-iot/pkg/types"
 	"github.com/rs/zerolog"
 	"google.golang.org/api/option"
 	"os"

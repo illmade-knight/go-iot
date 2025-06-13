@@ -90,7 +90,7 @@ func setupTestService(t *testing.T, extractor AttributeExtractor) (*IngestionSer
 
 	// We pass nil for the MQTTClientConfig because we are not testing MQTT connectivity,
 	// only the service's internal processing logic.
-	service := NewIngestionService(publisher, extractor, logger, cfg, nil)
+	service := NewIngestionService(publisher, extractor, logger, cfg, MQTTClientConfig{})
 	require.NotNil(t, service, "NewIngestionService should not return nil")
 
 	return service, publisher

@@ -15,7 +15,7 @@ func NewGardenMonitorExtractor() *GardenMonitorExtractor {
 
 // Extract pulls the "device_eui" from the JSON payload to use as a Pub/Sub attribute.
 func (e *GardenMonitorExtractor) Extract(payload []byte) (map[string]string, error) {
-	var partialPayloadstruct {
+	var partialPayload struct {
 		Payload struct {
 			DE string `json:"DE"`
 		} `json:"Payload"`

@@ -3,7 +3,7 @@ package loadgen_test
 import (
 	"context"
 	"errors"
-	"github.com/illmade-knight/ai-power-mpv/pkg/helpers/loadgen"
+	"github.com/illmade-knight/go-iot/pkg/helpers/loadgen"
 	"sync"
 	"testing"
 	"time"
@@ -20,7 +20,7 @@ type MockPayloadGenerator struct {
 	mock.Mock
 }
 
-func (m *MockPayloadGenerator) GeneratePayload() ([]byte, error) {
+func (m *MockPayloadGenerator) GeneratePayload(_ *loadgen.Device) ([]byte, error) {
 	args := m.Called()
 	// Safely cast the first return value to []byte
 	var payload []byte

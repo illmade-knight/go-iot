@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/illmade-knight/ai-power-mpv/pkg/types"
+	"github.com/illmade-knight/go-iot/pkg/types"
 )
 
 func ArchivalTransformer(msg types.ConsumedMessage) (*ArchivalData, bool, error) {

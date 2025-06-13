@@ -17,8 +17,8 @@ import (
 
 	"cloud.google.com/go/pubsub"
 	"cloud.google.com/go/storage"
-	"github.com/illmade-knight/ai-power-mpv/pkg/consumers"
-	"github.com/illmade-knight/ai-power-mpv/pkg/icestore"
+	"github.com/illmade-knight/go-iot/pkg/consumers"
+	"github.com/illmade-knight/go-iot/pkg/icestore"
 	"github.com/rs/zerolog"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"

@@ -7,7 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"github.com/illmade-knight/ai-power-mpv/pkg/extractors"
+	"github.com/illmade-knight/go-iot/pkg/types"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -25,7 +25,7 @@ import (
 	"github.com/testcontainers/testcontainers-go/wait"
 	"os"
 
-	"github.com/illmade-knight/ai-power-mpv/pkg/mqttconverter"
+	"github.com/illmade-knight/go-iot/pkg/mqttconverter"
 )
 
 // --- Test Constants ---
@@ -157,10 +157,10 @@ func TestIngestionService_Integration_MQTT_To_PubSub(t *testing.T) {
 	require.NoError(t, err, "Failed to create GooglePubSubPublisher")
 	defer publisher.Stop()
 
-	extractor := extractors.NewGardenMonitorExtractor()
+	extractor := types.NewGardenMonitorExtractor()
 	ingestionServiceCfg := mqttconverter.DefaultIngestionServiceConfig()
 
-	service := mqttconverter.NewIngestionService(publisher, extractor, serviceLogger, ingestionServiceCfg, mqttCfg)
+	service := mqttconverter.NewIngestionService(publisher, extractor, serviceLogger, ingestionServiceCfg, *mqttCfg)
 
 	// --- 4. Start the IngestionService ---
 	serviceErrChan := make(chan error, 1)
