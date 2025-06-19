@@ -8,12 +8,11 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/illmade-knight/go-iot/pkg/helpers/emulators"
 	"github.com/illmade-knight/go-iot/pkg/types"
 	"io"
-	"net/http"
 	"os"
 	"strconv"
-	"strings"
 	"testing"
 	"time"
 
@@ -26,146 +25,22 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"google.golang.org/api/iterator"
-	"google.golang.org/api/option"
-
-	"github.com/testcontainers/testcontainers-go"
-	"github.com/testcontainers/testcontainers-go/wait"
 )
 
 // --- Constants for the integration test environment (Unchanged) ---
 const (
 	testPubSubEmulatorImage   = "gcr.io/google.com/cloudsdktool/cloud-sdk:emulators"
-	testPubSubEmulatorPort    = "8085/tcp"
+	testPubSubEmulatorPort    = "8085"
 	testProjectID             = "test-garden-project"
 	testInputTopicID          = "garden-monitor-topic"
 	testInputSubscriptionID   = "garden-monitor-sub"
 	testBigQueryEmulatorImage = "ghcr.io/goccy/bigquery-emulator:0.6.6"
-	testBigQueryGRPCPortStr   = "9060"
-	testBigQueryRestPortStr   = "9050"
-	testBigQueryGRPCPort      = testBigQueryGRPCPortStr + "/tcp"
-	testBigQueryRestPort      = testBigQueryRestPortStr + "/tcp"
+	testBigQueryGRPCPort      = "9060"
+	testBigQueryRestPort      = "9050"
 	testBigQueryDatasetID     = "garden_data_dataset"
 	testBigQueryTableID       = "monitor_payloads"
 	testDeviceUID             = "GARDEN_MONITOR_001"
 )
-
-// --- Emulator Setup Helpers (Unchanged) ---
-func newEmulatorBigQueryClient(ctx context.Context, t *testing.T, projectID string) *bigquery.Client {
-	t.Helper()
-	emulatorHost := os.Getenv("BIGQUERY_API_ENDPOINT")
-	require.NotEmpty(t, emulatorHost, "BIGQUERY_API_ENDPOINT env var must be set for newEmulatorBigQueryClient")
-
-	clientOpts := []option.ClientOption{
-		option.WithEndpoint(emulatorHost),
-		option.WithoutAuthentication(),
-		option.WithHTTPClient(&http.Client{}),
-	}
-
-	client, err := bigquery.NewClient(ctx, projectID, clientOpts...)
-	require.NoError(t, err, "Failed to create BigQuery client for emulator. EmulatorHost: %s", emulatorHost)
-	return client
-}
-
-func setupPubSubEmulatorForProcessingTest(t *testing.T, ctx context.Context) (string, func()) {
-	t.Helper()
-	req := testcontainers.ContainerRequest{
-		Image:        testPubSubEmulatorImage,
-		ExposedPorts: []string{testPubSubEmulatorPort},
-		Cmd:          []string{"gcloud", "beta", "emulators", "pubsub", "start", fmt.Sprintf("--project=%s", testProjectID), fmt.Sprintf("--host-port=0.0.0.0:%s", strings.Split(testPubSubEmulatorPort, "/")[0])},
-		WaitingFor:   wait.ForLog("INFO: Server started, listening on").WithStartupTimeout(60 * time.Second),
-	}
-	container, err := testcontainers.GenericContainer(ctx, testcontainers.GenericContainerRequest{ContainerRequest: req, Started: true})
-	require.NoError(t, err)
-
-	host, err := container.Host(ctx)
-	require.NoError(t, err)
-	port, err := container.MappedPort(ctx, testPubSubEmulatorPort)
-	require.NoError(t, err)
-	emulatorHost := fmt.Sprintf("%s:%s", host, port.Port())
-	t.Logf("Pub/Sub emulator container started, listening on: %s", emulatorHost)
-	t.Setenv("PUBSUB_EMULATOR_HOST", emulatorHost)
-
-	adminClient, err := pubsub.NewClient(ctx, testProjectID)
-	require.NoError(t, err)
-	defer adminClient.Close()
-
-	topic := adminClient.Topic(testInputTopicID)
-	exists, err := topic.Exists(ctx)
-	require.NoError(t, err)
-	if !exists {
-		_, err = adminClient.CreateTopic(ctx, testInputTopicID)
-		require.NoError(t, err)
-	}
-
-	sub := adminClient.Subscription(testInputSubscriptionID)
-	exists, err = sub.Exists(ctx)
-	require.NoError(t, err)
-	if !exists {
-		_, err = adminClient.CreateSubscription(ctx, testInputSubscriptionID, pubsub.SubscriptionConfig{Topic: topic})
-		require.NoError(t, err)
-	}
-
-	return emulatorHost, func() {
-		require.NoError(t, container.Terminate(ctx))
-	}
-}
-
-func setupBigQueryEmulatorForProcessingTest(t *testing.T, ctx context.Context) func() {
-	t.Helper()
-	req := testcontainers.ContainerRequest{
-		Image:        testBigQueryEmulatorImage,
-		ExposedPorts: []string{testBigQueryGRPCPort, testBigQueryRestPort},
-		Cmd: []string{
-			"--project=" + testProjectID,
-			"--port=" + testBigQueryRestPortStr,
-			"--grpc-port=" + testBigQueryGRPCPortStr,
-		},
-		WaitingFor: wait.ForAll(
-			wait.ForListeningPort(testBigQueryGRPCPort).WithStartupTimeout(60*time.Second),
-			wait.ForListeningPort(testBigQueryRestPort).WithStartupTimeout(60*time.Second),
-		),
-	}
-	container, err := testcontainers.GenericContainer(ctx, testcontainers.GenericContainerRequest{ContainerRequest: req, Started: true})
-	require.NoError(t, err, "Failed to start BigQuery emulator container.")
-
-	host, err := container.Host(ctx)
-	require.NoError(t, err)
-
-	grpcMappedPort, err := container.MappedPort(ctx, testBigQueryGRPCPort)
-	require.NoError(t, err)
-	emulatorGRPCHost := fmt.Sprintf("%s:%s", host, grpcMappedPort.Port())
-
-	restMappedPort, err := container.MappedPort(ctx, testBigQueryRestPort)
-	require.NoError(t, err)
-	emulatorRESTHost := fmt.Sprintf("http://%s:%s", host, restMappedPort.Port())
-
-	t.Setenv("GOOGLE_CLOUD_PROJECT", testProjectID)
-	t.Setenv("BIGQUERY_EMULATOR_HOST", emulatorGRPCHost)
-	t.Setenv("BIGQUERY_API_ENDPOINT", emulatorRESTHost)
-
-	adminBqClient := newEmulatorBigQueryClient(ctx, t, testProjectID)
-	require.NotNil(t, adminBqClient, "Admin BQ client should not be nil")
-	defer adminBqClient.Close()
-
-	dataset := adminBqClient.Dataset(testBigQueryDatasetID)
-	err = dataset.Create(ctx, &bigquery.DatasetMetadata{Name: testBigQueryDatasetID})
-	if err != nil && !strings.Contains(err.Error(), "Already Exists") {
-		require.NoError(t, err, "Failed to create dataset '%s' on BQ emulator.", testBigQueryDatasetID)
-	}
-
-	table := dataset.Table(testBigQueryTableID)
-	schema, err := bigquery.InferSchema(types.GardenMonitorReadings{})
-	require.NoError(t, err, "Failed to infer schema from GardenMonitorReadings")
-
-	tableMeta := &bigquery.TableMetadata{Name: testBigQueryTableID, Schema: schema}
-	err = table.Create(ctx, tableMeta)
-	if err != nil && !strings.Contains(err.Error(), "Already Exists") {
-		require.NoError(t, err, "Failed to create table '%s' on BQ emulator", testBigQueryTableID)
-	}
-	return func() {
-		require.NoError(t, container.Terminate(ctx))
-	}
-}
 
 type TestUpstreamMessage struct {
 	Topic     string
@@ -179,10 +54,36 @@ func TestBigQueryService_Integration_FullFlow(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
 	defer cancel()
 
-	_, pubsubEmulatorCleanup := setupPubSubEmulatorForProcessingTest(t, ctx)
+	pubsubCtx, pubsubCancel := context.WithTimeout(ctx, time.Second*20)
+	defer pubsubCancel()
+	opts, pubsubEmulatorCleanup := emulators.SetupPubSubEmulator(t, pubsubCtx, &emulators.PubsubConfig{
+		GCImageContainer: emulators.GCImageContainer{
+			ImageContainer: emulators.ImageContainer{
+				EmulatorImage:    testPubSubEmulatorImage,
+				EmulatorHTTPPort: testPubSubEmulatorPort,
+			},
+			ProjectID: testProjectID,
+		},
+		TopicSubs: map[string]string{testInputTopicID: testInputSubscriptionID},
+	})
 	defer pubsubEmulatorCleanup()
-	bqEmulatorCleanup := setupBigQueryEmulatorForProcessingTest(t, ctx)
-	defer bqEmulatorCleanup()
+
+	bigqueryCtx, bigqueryCancel := context.WithTimeout(ctx, time.Second*20)
+	defer bigqueryCancel()
+	bigqueryOptions, bigqueryEmulatorCleanup := emulators.SetupBigQueryEmulator(t, bigqueryCtx, emulators.BigQueryConfig{
+		GCImageContainer: emulators.GCImageContainer{
+			ImageContainer: emulators.ImageContainer{
+				EmulatorImage:    testBigQueryEmulatorImage,
+				EmulatorHTTPPort: testBigQueryRestPort,
+				EmulatorGRPCPort: testBigQueryGRPCPort,
+			},
+			ProjectID:       testProjectID,
+			SetEnvVariables: false,
+		},
+		DatasetTables: map[string]string{testBigQueryDatasetID: testBigQueryTableID},
+		Schemas:       map[string]interface{}{testBigQueryTableID: types.GardenMonitorReadings{}},
+	})
+	defer bigqueryEmulatorCleanup()
 
 	// --- Configuration setup (Unchanged) ---
 	var logBuf bytes.Buffer
@@ -203,34 +104,12 @@ func TestBigQueryService_Integration_FullFlow(t *testing.T) {
 		TableID:   testBigQueryTableID,
 	}
 
-	// --- Define the Decoder (Unchanged) ---
-	//gardenPayloadDecoder := func(payload []byte) (*GardenMonitorReadings, error) {
-	//	var upstreamMsg GardenMonitorMessage
-	//	if err := json.Unmarshal(payload, &upstreamMsg); err != nil {
-	//		return nil, fmt.Errorf("failed to unmarshal upstream message: %w", err)
-	//	}
-	//	return upstreamMsg.Payload, nil
-	//}
-
-	//gardenPayloadTransformer := func(msg types.ConsumedMessage) (*types.GardenMonitorReadings, bool, error) {
-	//	var upstreamMsg types.GardenMonitorMessage
-	//	if err := json.Unmarshal(msg.Payload, &upstreamMsg); err != nil {
-	//		// This is a malformed message, return an error to Nack it.
-	//		return nil, false, fmt.Errorf("failed to unmarshal upstream message: %w", err)
-	//	}
-	//	// If the inner payload is nil, we want to skip this message but still Ack it.
-	//	if upstreamMsg.Payload == nil {
-	//		return nil, true, nil
-	//	}
-	//	// Success case
-	//	return upstreamMsg.Payload, false, nil
-	//}
-
 	// --- Initialize Components with new, refactored structure ---
-	consumer, err := consumers.NewGooglePubSubConsumer(ctx, consumerCfg, logger)
+	//opts := []option.ClientOption{option.WithEndpoint("localhost:58752"), option.WithoutAuthentication()}
+	consumer, err := consumers.NewGooglePubSubConsumer(ctx, consumerCfg, opts, logger)
 	require.NoError(t, err)
 
-	bqClient := newEmulatorBigQueryClient(ctx, t, bqInserterCfg.ProjectID)
+	bqClient, err := bigquery.NewClient(ctx, testProjectID, bigqueryOptions...)
 	require.NotNil(t, bqClient)
 	defer bqClient.Close()
 
@@ -284,12 +163,8 @@ func TestBigQueryService_Integration_FullFlow(t *testing.T) {
 	processingService.Stop()
 	time.Sleep(2 * time.Second)
 
-	// --- Verification Step (Unchanged) ---
-	queryClient := newEmulatorBigQueryClient(ctx, t, testProjectID)
-	defer queryClient.Close()
-
 	queryString := fmt.Sprintf("SELECT * FROM `%s.%s` WHERE uid = @uid ORDER BY sequence", testBigQueryDatasetID, testBigQueryTableID)
-	query := queryClient.Query(queryString)
+	query := bqClient.Query(queryString)
 	query.Parameters = []bigquery.QueryParameter{{Name: "uid", Value: testDeviceUID}}
 
 	it, err := query.Read(ctx)

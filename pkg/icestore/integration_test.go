@@ -10,6 +10,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/illmade-knight/go-iot/pkg/helpers/emulators"
 	"os"
 	//"strings"
 	"testing"
@@ -24,13 +25,16 @@ import (
 	"github.com/stretchr/testify/require"
 	"google.golang.org/api/iterator"
 	"google.golang.org/api/option"
-
-	"github.com/testcontainers/testcontainers-go"
-	"github.com/testcontainers/testcontainers-go/wait"
 )
 
 // --- Test Constants ---
 const (
+	testPubsubImage = "gcr.io/google.com/cloudsdktool/cloud-sdk:emulators"
+	testPubsubPort  = "8085"
+
+	testGCSImage = "fsouza/fake-gcs-server:latest"
+	testGCSPORT  = "4443"
+
 	testProjectID      = "icestore-test-project"
 	testTopicID        = "icestore-test-topic"
 	testSubscriptionID = "icestore-test-sub"
@@ -60,11 +64,30 @@ func TestIceStorageService_Integration(t *testing.T) {
 	logger := zerolog.New(zerolog.ConsoleWriter{Out: os.Stderr, TimeFormat: time.RFC3339}).Level(zerolog.InfoLevel)
 
 	logger.Info().Msg("Setting up Pub/Sub emulator...")
-	_, pubsubCleanup := setupPubSubEmulator(t, ctx)
+	pubsubClientOptions, pubsubCleanup := emulators.SetupPubSubEmulator(t, ctx, &emulators.PubsubConfig{
+		GCImageContainer: emulators.GCImageContainer{
+			ImageContainer: emulators.ImageContainer{
+				EmulatorImage:    testPubsubImage,
+				EmulatorHTTPPort: testPubsubPort,
+			},
+			ProjectID: testProjectID,
+		},
+		TopicSubs: map[string]string{testTopicID: testSubscriptionID},
+	})
 	defer pubsubCleanup()
 
 	logger.Info().Msg("Setting up GCS emulator...")
-	gcsClient, gcsCleanup := setupGCSEmulator(t, ctx)
+	gcsClient, gcsCleanup := emulators.SetupGCSEmulator(t, ctx, emulators.GCSConfig{
+		GCImageContainer: emulators.GCImageContainer{
+			ImageContainer: emulators.ImageContainer{
+				EmulatorImage:    testGCSImage,
+				EmulatorHTTPPort: testGCSPORT,
+			},
+			ProjectID: testProjectID,
+		},
+		BaseBucket:  testBucketName,
+		BaseStorage: "/storage/v1/b",
+	}) //setupGCSEmulator(t, ctx)
 	defer gcsCleanup()
 
 	// --- Test Cases Definition ---
@@ -146,7 +169,7 @@ func TestIceStorageService_Integration(t *testing.T) {
 			consumerCfg := &consumers.GooglePubSubConsumerConfig{
 				ProjectID: testProjectID, SubscriptionID: testSubscriptionID, MaxOutstandingMessages: 10, NumGoroutines: 2,
 			}
-			consumer, err := consumers.NewGooglePubSubConsumer(testCtx, consumerCfg, logger)
+			consumer, err := consumers.NewGooglePubSubConsumer(testCtx, consumerCfg, pubsubClientOptions, logger)
 			require.NoError(t, err)
 
 			batcher, err := icestore.NewGCSBatchProcessor(
@@ -212,60 +235,6 @@ func TestIceStorageService_Integration(t *testing.T) {
 
 			}, 15*time.Second, 500*time.Millisecond, "GCS verification failed")
 		})
-	}
-}
-
-// --- Emulator Setup and Verification Helpers ---
-func setupPubSubEmulator(t *testing.T, ctx context.Context) (string, func()) {
-	t.Helper()
-	req := testcontainers.ContainerRequest{Image: "gcr.io/google.com/cloudsdktool/cloud-sdk:emulators", ExposedPorts: []string{"8085/tcp"}, Cmd: []string{"gcloud", "beta", "emulators", "pubsub", "start", fmt.Sprintf("--project=%s", testProjectID), "--host-port=0.0.0.0:8085"}, WaitingFor: wait.ForLog("INFO: Server started, listening on")}
-	container, err := testcontainers.GenericContainer(ctx, testcontainers.GenericContainerRequest{ContainerRequest: req, Started: true})
-	require.NoError(t, err)
-
-	host, err := container.Host(ctx)
-	require.NoError(t, err)
-	port, err := container.MappedPort(ctx, "8085/tcp")
-	require.NoError(t, err)
-	emulatorHost := fmt.Sprintf("%s:%s", host, port.Port())
-	t.Setenv("PUBSUB_EMULATOR_HOST", emulatorHost)
-
-	adminClient, err := pubsub.NewClient(ctx, testProjectID, option.WithEndpoint(emulatorHost), option.WithoutAuthentication())
-	require.NoError(t, err)
-	defer adminClient.Close()
-
-	topic, err := adminClient.CreateTopic(ctx, testTopicID)
-	require.NoError(t, err)
-	_, err = adminClient.CreateSubscription(ctx, testSubscriptionID, pubsub.SubscriptionConfig{Topic: topic})
-	require.NoError(t, err)
-	return emulatorHost, func() { require.NoError(t, container.Terminate(ctx)) }
-}
-
-func setupGCSEmulator(t *testing.T, ctx context.Context) (*storage.Client, func()) {
-	t.Helper()
-	req := testcontainers.ContainerRequest{
-		Image:        "fsouza/fake-gcs-server:latest",
-		ExposedPorts: []string{"4443/tcp"},
-		Cmd:          []string{"-scheme", "http"},
-		WaitingFor: wait.ForHTTP("/storage/v1/b").WithPort("4443/tcp").WithStatusCodeMatcher(
-			func(status int) bool {
-				return status > 0
-			}).WithStartupTimeout(20 * time.Second),
-	}
-	container, err := testcontainers.GenericContainer(ctx, testcontainers.GenericContainerRequest{ContainerRequest: req, Started: true})
-	require.NoError(t, err)
-	endpoint, err := container.Endpoint(ctx, "")
-	require.NoError(t, err)
-	t.Setenv("STORAGE_EMULATOR_HOST", endpoint)
-
-	gcsClient, err := storage.NewClient(ctx, option.WithoutAuthentication(), option.WithEndpoint(os.Getenv("STORAGE_EMULATOR_HOST")))
-	require.NoError(t, err)
-
-	err = gcsClient.Bucket(testBucketName).Create(ctx, testProjectID, nil)
-	require.NoError(t, err)
-
-	return gcsClient, func() {
-		gcsClient.Close()
-		require.NoError(t, container.Terminate(ctx))
 	}
 }
 

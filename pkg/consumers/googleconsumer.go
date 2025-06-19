@@ -54,15 +54,7 @@ type GooglePubSubConsumer struct {
 	doneChan           chan struct{}
 }
 
-func NewGooglePubSubConsumer(ctx context.Context, cfg *GooglePubSubConsumerConfig, logger zerolog.Logger) (*GooglePubSubConsumer, error) {
-	var opts []option.ClientOption
-	pubsubEmulatorHost := os.Getenv("PUBSUB_EMULATOR_HOST")
-	if pubsubEmulatorHost != "" {
-		logger.Info().Str("emulator_host", pubsubEmulatorHost).Str("subscription_id", cfg.SubscriptionID).Msg("Using Pub/Sub emulator for consumer.")
-		opts = append(opts, option.WithEndpoint(pubsubEmulatorHost), option.WithoutAuthentication())
-	} else if cfg.CredentialsFile != "" {
-		opts = append(opts, option.WithCredentialsFile(cfg.CredentialsFile))
-	}
+func NewGooglePubSubConsumer(ctx context.Context, cfg *GooglePubSubConsumerConfig, opts []option.ClientOption, logger zerolog.Logger) (*GooglePubSubConsumer, error) {
 
 	client, err := pubsub.NewClient(ctx, cfg.ProjectID, opts...)
 	if err != nil {
@@ -70,22 +62,14 @@ func NewGooglePubSubConsumer(ctx context.Context, cfg *GooglePubSubConsumerConfi
 	}
 	sub := client.Subscription(cfg.SubscriptionID)
 
+	e, err := sub.Exists(ctx)
+	if !e || err != nil {
+		return nil, fmt.Errorf("subscription %s does not exist: %w", cfg.SubscriptionID, err)
+	}
 	logger.Info().Str("subscription_id", cfg.SubscriptionID).Msg("Listening for messages")
 
 	sub.ReceiveSettings.MaxOutstandingMessages = cfg.MaxOutstandingMessages
 	sub.ReceiveSettings.NumGoroutines = cfg.NumGoroutines
-
-	if pubsubEmulatorHost != "" {
-		exists, err := sub.Exists(ctx)
-		if err != nil {
-			client.Close()
-			return nil, fmt.Errorf("subscription.Exists check for %s: %w", cfg.SubscriptionID, err)
-		}
-		if !exists {
-			client.Close()
-			return nil, fmt.Errorf("Pub/Sub subscription %s does not exist in project %s", cfg.SubscriptionID, cfg.ProjectID)
-		}
-	}
 
 	return &GooglePubSubConsumer{
 		client:       client,
