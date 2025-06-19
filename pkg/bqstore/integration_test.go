@@ -31,9 +31,9 @@ import (
 const (
 	testPubSubEmulatorImage   = "gcr.io/google.com/cloudsdktool/cloud-sdk:emulators"
 	testPubSubEmulatorPort    = "8085"
-	testProjectID             = "test-garden-project"
 	testInputTopicID          = "garden-monitor-topic"
 	testInputSubscriptionID   = "garden-monitor-sub"
+	testProjectID             = "test-garden-project"
 	testBigQueryEmulatorImage = "ghcr.io/goccy/bigquery-emulator:0.6.6"
 	testBigQueryGRPCPort      = "9060"
 	testBigQueryRestPort      = "9050"
