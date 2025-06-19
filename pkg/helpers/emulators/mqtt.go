@@ -13,7 +13,7 @@ import (
 	"time"
 )
 
-func CetupMosquittoContainer(t *testing.T, ctx context.Context, cfg ImageContainer) (brokerURL string, cleanupFunc func()) {
+func SetupMosquittoContainer(t *testing.T, ctx context.Context, cfg ImageContainer) (brokerURL string, cleanupFunc func()) {
 	t.Helper()
 	confPath := filepath.Join(t.TempDir(), "mosquitto.conf")
 	err := os.WriteFile(confPath, []byte("listener 1883\nallow_anonymous true\n"), 0644)

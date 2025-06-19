@@ -87,7 +87,7 @@ func TestIceStorageService_Integration(t *testing.T) {
 		},
 		BaseBucket:  testBucketName,
 		BaseStorage: "/storage/v1/b",
-	}) //setupGCSEmulator(t, ctx)
+	})
 	defer gcsCleanup()
 
 	// --- Test Cases Definition ---
