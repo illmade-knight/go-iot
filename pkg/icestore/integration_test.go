@@ -32,9 +32,6 @@ const (
 	testPubsubImage = "gcr.io/google.com/cloudsdktool/cloud-sdk:emulators"
 	testPubsubPort  = "8085"
 
-	testGCSImage = "fsouza/fake-gcs-server:latest"
-	testGCSPORT  = "4443"
-
 	testProjectID      = "icestore-test-project"
 	testTopicID        = "icestore-test-topic"
 	testSubscriptionID = "icestore-test-sub"
@@ -64,30 +61,16 @@ func TestIceStorageService_Integration(t *testing.T) {
 	logger := zerolog.New(zerolog.ConsoleWriter{Out: os.Stderr, TimeFormat: time.RFC3339}).Level(zerolog.InfoLevel)
 
 	logger.Info().Msg("Setting up Pub/Sub emulator...")
-	pubsubClientOptions, pubsubCleanup := emulators.SetupPubSubEmulator(t, ctx, &emulators.PubsubConfig{
-		GCImageContainer: emulators.GCImageContainer{
-			ImageContainer: emulators.ImageContainer{
-				EmulatorImage:    testPubsubImage,
-				EmulatorHTTPPort: testPubsubPort,
-			},
-			ProjectID: testProjectID,
-		},
-		TopicSubs: map[string]string{testTopicID: testSubscriptionID},
-	})
+
+	pubsubConfig := emulators.GetDefaultPubsubConfig(testProjectID, map[string]string{testTopicID: testSubscriptionID})
+
+	pubsubClientOptions, pubsubCleanup := emulators.SetupPubSubEmulator(t, ctx, pubsubConfig)
 	defer pubsubCleanup()
 
 	logger.Info().Msg("Setting up GCS emulator...")
-	gcsClient, gcsCleanup := emulators.SetupGCSEmulator(t, ctx, emulators.GCSConfig{
-		GCImageContainer: emulators.GCImageContainer{
-			ImageContainer: emulators.ImageContainer{
-				EmulatorImage:    testGCSImage,
-				EmulatorHTTPPort: testGCSPORT,
-			},
-			ProjectID: testProjectID,
-		},
-		BaseBucket:  testBucketName,
-		BaseStorage: "/storage/v1/b",
-	})
+
+	gcsConfig := emulators.GetDefaultGCSConfig(testProjectID, testBucketName)
+	gcsClient, gcsCleanup := emulators.SetupGCSEmulator(t, ctx, gcsConfig)
 	defer gcsCleanup()
 
 	// --- Test Cases Definition ---

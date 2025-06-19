@@ -29,17 +29,14 @@ import (
 
 // --- Constants for the integration test environment (Unchanged) ---
 const (
-	testPubSubEmulatorImage   = "gcr.io/google.com/cloudsdktool/cloud-sdk:emulators"
-	testPubSubEmulatorPort    = "8085"
-	testInputTopicID          = "garden-monitor-topic"
-	testInputSubscriptionID   = "garden-monitor-sub"
-	testProjectID             = "test-garden-project"
-	testBigQueryEmulatorImage = "ghcr.io/goccy/bigquery-emulator:0.6.6"
-	testBigQueryGRPCPort      = "9060"
-	testBigQueryRestPort      = "9050"
-	testBigQueryDatasetID     = "garden_data_dataset"
-	testBigQueryTableID       = "monitor_payloads"
-	testDeviceUID             = "GARDEN_MONITOR_001"
+	testProjectID = "test-garden-project"
+
+	testInputTopicID        = "garden-monitor-topic"
+	testInputSubscriptionID = "garden-monitor-sub"
+
+	testBigQueryDatasetID = "garden_data_dataset"
+	testBigQueryTableID   = "monitor_payloads"
+	testDeviceUID         = "GARDEN_MONITOR_001"
 )
 
 type TestUpstreamMessage struct {
@@ -56,33 +53,18 @@ func TestBigQueryService_Integration_FullFlow(t *testing.T) {
 
 	pubsubCtx, pubsubCancel := context.WithTimeout(ctx, time.Second*20)
 	defer pubsubCancel()
-	opts, pubsubEmulatorCleanup := emulators.SetupPubSubEmulator(t, pubsubCtx, &emulators.PubsubConfig{
-		GCImageContainer: emulators.GCImageContainer{
-			ImageContainer: emulators.ImageContainer{
-				EmulatorImage:    testPubSubEmulatorImage,
-				EmulatorHTTPPort: testPubSubEmulatorPort,
-			},
-			ProjectID: testProjectID,
-		},
-		TopicSubs: map[string]string{testInputTopicID: testInputSubscriptionID},
-	})
+
+	pubsubConfig := emulators.GetDefaultPubsubConfig(testProjectID, map[string]string{testInputTopicID: testInputSubscriptionID})
+
+	opts, pubsubEmulatorCleanup := emulators.SetupPubSubEmulator(t, pubsubCtx, pubsubConfig)
 	defer pubsubEmulatorCleanup()
 
 	bigqueryCtx, bigqueryCancel := context.WithTimeout(ctx, time.Second*20)
 	defer bigqueryCancel()
-	bigqueryOptions, bigqueryEmulatorCleanup := emulators.SetupBigQueryEmulator(t, bigqueryCtx, emulators.BigQueryConfig{
-		GCImageContainer: emulators.GCImageContainer{
-			ImageContainer: emulators.ImageContainer{
-				EmulatorImage:    testBigQueryEmulatorImage,
-				EmulatorHTTPPort: testBigQueryRestPort,
-				EmulatorGRPCPort: testBigQueryGRPCPort,
-			},
-			ProjectID:       testProjectID,
-			SetEnvVariables: false,
-		},
-		DatasetTables: map[string]string{testBigQueryDatasetID: testBigQueryTableID},
-		Schemas:       map[string]interface{}{testBigQueryTableID: types.GardenMonitorReadings{}},
-	})
+
+	bigqueryCfg := emulators.GetDefaultConfig(testProjectID, map[string]string{testBigQueryDatasetID: testBigQueryTableID},
+		map[string]interface{}{testBigQueryTableID: types.GardenMonitorReadings{}})
+	bigqueryOptions, bigqueryEmulatorCleanup := emulators.SetupBigQueryEmulator(t, bigqueryCtx, bigqueryCfg)
 	defer bigqueryEmulatorCleanup()
 
 	// --- Configuration setup (Unchanged) ---

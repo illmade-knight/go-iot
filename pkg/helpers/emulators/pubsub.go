@@ -13,15 +13,33 @@ import (
 	"testing"
 )
 
+const (
+	testPubSubEmulatorImage = "gcr.io/google.com/cloudsdktool/cloud-sdk:emulators"
+	testPubSubEmulatorPort  = "8085"
+)
+
 type PubsubConfig struct {
 	GCImageContainer
 	TopicSubs map[string]string
 }
 
+func GetDefaultPubsubConfig(projectID string, topicSubs map[string]string) PubsubConfig {
+	return PubsubConfig{
+		GCImageContainer: GCImageContainer{
+			ImageContainer: ImageContainer{
+				EmulatorImage:    testPubSubEmulatorImage,
+				EmulatorHTTPPort: testPubSubEmulatorPort,
+			},
+			ProjectID: projectID,
+		},
+		TopicSubs: topicSubs,
+	}
+}
+
 /*
 Update: prefer port startup to wait.ForLog - the default is 8085
 */
-func SetupPubSubEmulator(t *testing.T, ctx context.Context, cfg *PubsubConfig) (clientOptions []option.ClientOption, cleanupFunc func()) {
+func SetupPubSubEmulator(t *testing.T, ctx context.Context, cfg PubsubConfig) (clientOptions []option.ClientOption, cleanupFunc func()) {
 	t.Helper()
 	req := testcontainers.ContainerRequest{
 		Image:        cfg.EmulatorImage,

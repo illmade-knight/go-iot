@@ -14,10 +14,29 @@ import (
 	"time"
 )
 
+const (
+	testGCSImage = "fsouza/fake-gcs-server:latest"
+	testGCSPort  = "4443"
+)
+
 type GCSConfig struct {
 	GCImageContainer
 	BaseBucket  string
 	BaseStorage string
+}
+
+func GetDefaultGCSConfig(projectID, baseBucket string) GCSConfig {
+	return GCSConfig{
+		GCImageContainer: GCImageContainer{
+			ImageContainer: ImageContainer{
+				EmulatorImage:    testGCSImage,
+				EmulatorHTTPPort: testGCSPort,
+			},
+			ProjectID: projectID,
+		},
+		BaseBucket:  baseBucket,
+		BaseStorage: "/storage/v1/b",
+	}
 }
 
 func SetupGCSEmulator(t *testing.T, ctx context.Context, cfg GCSConfig) (*storage.Client, func()) {

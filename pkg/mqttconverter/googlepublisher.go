@@ -13,19 +13,29 @@ import (
 
 // --- Google Cloud Pub/Sub Publisher Implementation ---
 
-// GooglePubSubPublisherConfig holds configuration for the Pub/Sub publisher.
-type GooglePubSubPublisherConfig struct {
+// GooglePubsubPublisherConfig holds configuration for the Pub/Sub publisher.
+type GooglePubsubPublisherConfig struct {
 	ProjectID       string
 	TopicID         string
-	CredentialsFile string
+	ClientOptions   []option.ClientOption
+	PublishSettings pubsub.PublishSettings
 }
 
-// LoadGooglePubSubPublisherConfigFromEnv loads Pub/Sub configuration from environment variables.
-func LoadGooglePubSubPublisherConfigFromEnv(topicID string) (*GooglePubSubPublisherConfig, error) {
-	cfg := &GooglePubSubPublisherConfig{
-		ProjectID:       os.Getenv("GCP_PROJECT_ID"),
-		TopicID:         os.Getenv(topicID),
-		CredentialsFile: os.Getenv("GCP_PUBSUB_CREDENTIALS_FILE"),
+func GetDefaultPublishSettings() pubsub.PublishSettings {
+	return pubsub.PublishSettings{
+		DelayThreshold: 100 * time.Millisecond,
+		CountThreshold: 100,
+		ByteThreshold:  1e6,
+		NumGoroutines:  10,
+		Timeout:        60 * time.Second,
+	}
+}
+
+// LoadGooglePubsubPublisherConfigFromEnv loads Pub/Sub configuration from environment variables.
+func LoadGooglePubsubPublisherConfigFromEnv(topicID string) (*GooglePubsubPublisherConfig, error) {
+	cfg := &GooglePubsubPublisherConfig{
+		ProjectID: os.Getenv("GCP_PROJECT_ID"),
+		TopicID:   os.Getenv(topicID),
 	}
 	if cfg.ProjectID == "" {
 		return nil, errors.New("GCP_PROJECT_ID environment variable not set for Pub/Sub")
@@ -33,46 +43,40 @@ func LoadGooglePubSubPublisherConfigFromEnv(topicID string) (*GooglePubSubPublis
 	if cfg.TopicID == "" {
 		return nil, fmt.Errorf("%s environment variable not set for Pub/Sub", topicID)
 	}
+
+	credentialsFile := os.Getenv("GCP_PUBSUB_CREDENTIALS_FILE")
+	if credentialsFile != "" {
+		cfg.ClientOptions = []option.ClientOption{option.WithCredentialsFile(credentialsFile)}
+	}
+
 	return cfg, nil
 }
 
-// GooglePubSubPublisher implements MessagePublisher for Google Cloud Pub/Sub.
-type GooglePubSubPublisher struct {
+// GooglePubsubPublisher implements MessagePublisher for Google Cloud Pub/Sub.
+type GooglePubsubPublisher struct {
 	client *pubsub.Client
 	topic  *pubsub.Topic
 	logger zerolog.Logger
 }
 
-// NewGooglePubSubPublisher creates a new publisher for Google Cloud Pub/Sub.
-func NewGooglePubSubPublisher(ctx context.Context, cfg *GooglePubSubPublisherConfig, logger zerolog.Logger) (*GooglePubSubPublisher, error) {
-	var opts []option.ClientOption
-	pubsubEmulatorHost := os.Getenv("PUBSUB_EMULATOR_HOST")
+// NewGooglePubsubPublisher creates a new publisher for Google Cloud Pub/Sub.
+func NewGooglePubsubPublisher(ctx context.Context, cfg GooglePubsubPublisherConfig, logger zerolog.Logger) (*GooglePubsubPublisher, error) {
 
-	if pubsubEmulatorHost != "" {
-		logger.Info().Str("emulator_host", pubsubEmulatorHost).Msg("Using Pub/Sub emulator")
-		opts = append(opts, option.WithEndpoint(pubsubEmulatorHost), option.WithoutAuthentication())
-	} else if cfg.CredentialsFile != "" {
-		opts = append(opts, option.WithCredentialsFile(cfg.CredentialsFile))
-		logger.Info().Str("credentials_file", cfg.CredentialsFile).Msg("Using credentials file for Pub/Sub")
-	} else {
-		logger.Info().Msg("Using Application Default Credentials (ADC) for Pub/Sub")
-	}
-
-	client, err := pubsub.NewClient(ctx, cfg.ProjectID, opts...)
+	client, err := pubsub.NewClient(ctx, cfg.ProjectID, cfg.ClientOptions...)
 	if err != nil {
 		return nil, fmt.Errorf("pubsub.NewClient: %w", err)
 	}
 
 	topic := client.Topic(cfg.TopicID)
 
-	topic.PublishSettings.DelayThreshold = 100 * time.Millisecond
-	topic.PublishSettings.CountThreshold = 100
-	topic.PublishSettings.ByteThreshold = 1e6
-	topic.PublishSettings.NumGoroutines = 10
-	topic.PublishSettings.Timeout = 60 * time.Second
+	topic.PublishSettings.DelayThreshold = cfg.PublishSettings.DelayThreshold
+	topic.PublishSettings.CountThreshold = cfg.PublishSettings.CountThreshold
+	topic.PublishSettings.ByteThreshold = cfg.PublishSettings.CompressionBytesThreshold
+	topic.PublishSettings.NumGoroutines = cfg.PublishSettings.NumGoroutines
+	topic.PublishSettings.Timeout = cfg.PublishSettings.Timeout
 
-	logger.Info().Str("project_id", cfg.ProjectID).Str("topic_id", cfg.TopicID).Msg("GooglePubSubPublisher initialized successfully")
-	return &GooglePubSubPublisher{
+	logger.Info().Str("project_id", cfg.ProjectID).Str("topic_id", cfg.TopicID).Msg("GooglePubsubPublisher initialized successfully")
+	return &GooglePubsubPublisher{
 		client: client,
 		topic:  topic,
 		logger: logger,
@@ -81,7 +85,7 @@ func NewGooglePubSubPublisher(ctx context.Context, cfg *GooglePubSubPublisherCon
 
 // Publish publishes the raw message payload to Pub/Sub asynchronously.
 // The original payload is never modified.
-func (p *GooglePubSubPublisher) Publish(ctx context.Context, mqttTopic string, payload []byte, attributes map[string]string) error {
+func (p *GooglePubsubPublisher) Publish(ctx context.Context, mqttTopic string, payload []byte, attributes map[string]string) error {
 	if payload == nil {
 		return errors.New("cannot publish a nil payload")
 	}
@@ -112,8 +116,8 @@ func (p *GooglePubSubPublisher) Publish(ctx context.Context, mqttTopic string, p
 }
 
 // Stop flushes pending messages and closes the Pub/Sub client.
-func (p *GooglePubSubPublisher) Stop() {
-	p.logger.Info().Msg("Stopping GooglePubSubPublisher...")
+func (p *GooglePubsubPublisher) Stop() {
+	p.logger.Info().Msg("Stopping GooglePubsubPublisher...")
 	if p.topic != nil {
 		p.topic.Stop()
 		p.logger.Info().Msg("Pub/Sub topic stopped and flushed.")

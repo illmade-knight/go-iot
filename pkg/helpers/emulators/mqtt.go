@@ -13,6 +13,18 @@ import (
 	"time"
 )
 
+const (
+	mosquitoImage = "eclipse-mosquitto:2.0"
+	mosquitoPort  = "1883"
+)
+
+func GetDefaultMqttImageContainer() ImageContainer {
+	return ImageContainer{
+		EmulatorImage:    mosquitoImage,
+		EmulatorHTTPPort: mosquitoPort,
+	}
+}
+
 func SetupMosquittoContainer(t *testing.T, ctx context.Context, cfg ImageContainer) (brokerURL string, cleanupFunc func()) {
 	t.Helper()
 	confPath := filepath.Join(t.TempDir(), "mosquitto.conf")

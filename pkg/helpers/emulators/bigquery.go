@@ -21,6 +21,28 @@ type BigQueryConfig struct {
 	Schemas       map[string]interface{}
 }
 
+const (
+	testBigQueryEmulatorImage = "ghcr.io/goccy/bigquery-emulator:0.6.6"
+	testBigQueryGRPCPort      = "9060"
+	testBigQueryRestPort      = "9050"
+)
+
+func GetDefaultConfig(projectID string, datasetTables map[string]string, schemaMappings map[string]interface{}) BigQueryConfig {
+	return BigQueryConfig{
+		GCImageContainer: GCImageContainer{
+			ImageContainer: ImageContainer{
+				EmulatorImage:    testBigQueryEmulatorImage,
+				EmulatorHTTPPort: testBigQueryRestPort,
+				EmulatorGRPCPort: testBigQueryGRPCPort,
+			},
+			ProjectID:       projectID,
+			SetEnvVariables: false,
+		},
+		DatasetTables: datasetTables,
+		Schemas:       schemaMappings,
+	}
+}
+
 func SetupBigQueryEmulator(t *testing.T, ctx context.Context, cfg BigQueryConfig) (opts []option.ClientOption, cleanupFunc func()) {
 	t.Helper()
 	httpPort := fmt.Sprintf("%s/tcp", cfg.EmulatorHTTPPort)
