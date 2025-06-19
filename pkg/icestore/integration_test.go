@@ -149,10 +149,10 @@ func TestIceStorageService_Integration(t *testing.T) {
 			require.NoError(t, clearBucket(testCtx, gcsClient.Bucket(testBucketName)), "Failed to clear GCS bucket")
 
 			// --- Initialize Service Components ---
-			consumerCfg := &consumers.GooglePubSubConsumerConfig{
+			consumerCfg := &consumers.GooglePubsubConsumerConfig{
 				ProjectID: testProjectID, SubscriptionID: testSubscriptionID, MaxOutstandingMessages: 10, NumGoroutines: 2,
 			}
-			consumer, err := consumers.NewGooglePubSubConsumer(testCtx, consumerCfg, pubsubClientOptions, logger)
+			consumer, err := consumers.NewGooglePubsubConsumer(testCtx, consumerCfg, pubsubClientOptions, logger)
 			require.NoError(t, err)
 
 			batcher, err := icestore.NewGCSBatchProcessor(

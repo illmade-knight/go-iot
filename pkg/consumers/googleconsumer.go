@@ -17,7 +17,7 @@ import (
 // This is a simplified version for this service.
 // It assumes the topic provides messages that can be unmarshalled into ConsumedUpstreamMessage.
 
-type GooglePubSubConsumerConfig struct {
+type GooglePubsubConsumerConfig struct {
 	ProjectID              string
 	SubscriptionID         string
 	CredentialsFile        string // Optional
@@ -25,12 +25,12 @@ type GooglePubSubConsumerConfig struct {
 	NumGoroutines          int
 }
 
-// LoadGooglePubSubConsumerConfigFromEnv loads consumer configuration from environment variables.
+// LoadGooglePubsubConsumerConfigFromEnv loads consumer configuration from environment variables.
 // Renamed from LoadConsumerConfigFromEnv
-func LoadGooglePubSubConsumerConfigFromEnv() (*GooglePubSubConsumerConfig, error) {
+func LoadGooglePubsubConsumerConfigFromEnv() (*GooglePubsubConsumerConfig, error) {
 	subID := os.Getenv("PUBSUB_SUBSCRIPTION_ID_GARDEN_MONITOR_INPUT")
 
-	cfg := &GooglePubSubConsumerConfig{
+	cfg := &GooglePubsubConsumerConfig{
 		ProjectID:              os.Getenv("GCP_PROJECT_ID"),
 		SubscriptionID:         subID,
 		CredentialsFile:        os.Getenv("GCP_PUBSUB_CREDENTIALS_FILE"),
@@ -43,7 +43,7 @@ func LoadGooglePubSubConsumerConfigFromEnv() (*GooglePubSubConsumerConfig, error
 	return cfg, nil
 }
 
-type GooglePubSubConsumer struct {
+type GooglePubsubConsumer struct {
 	client             *pubsub.Client
 	subscription       *pubsub.Subscription
 	logger             zerolog.Logger
@@ -54,8 +54,11 @@ type GooglePubSubConsumer struct {
 	doneChan           chan struct{}
 }
 
-func NewGooglePubSubConsumer(ctx context.Context, cfg *GooglePubSubConsumerConfig, opts []option.ClientOption, logger zerolog.Logger) (*GooglePubSubConsumer, error) {
-
+func NewGooglePubsubConsumer(ctx context.Context, cfg *GooglePubsubConsumerConfig, opts []option.ClientOption, logger zerolog.Logger) (*GooglePubsubConsumer, error) {
+	if opts == nil {
+		opts = []option.ClientOption{}
+	}
+	
 	client, err := pubsub.NewClient(ctx, cfg.ProjectID, opts...)
 	if err != nil {
 		return nil, fmt.Errorf("pubsub.NewClient for subscription %s: %w", cfg.SubscriptionID, err)
@@ -71,16 +74,16 @@ func NewGooglePubSubConsumer(ctx context.Context, cfg *GooglePubSubConsumerConfi
 	sub.ReceiveSettings.MaxOutstandingMessages = cfg.MaxOutstandingMessages
 	sub.ReceiveSettings.NumGoroutines = cfg.NumGoroutines
 
-	return &GooglePubSubConsumer{
+	return &GooglePubsubConsumer{
 		client:       client,
 		subscription: sub,
-		logger:       logger.With().Str("component", "GooglePubSubConsumer").Str("subscription_id", cfg.SubscriptionID).Logger(),
+		logger:       logger.With().Str("component", "GooglePubsubConsumer").Str("subscription_id", cfg.SubscriptionID).Logger(),
 		outputChan:   make(chan types.ConsumedMessage, cfg.MaxOutstandingMessages),
 		doneChan:     make(chan struct{}),
 	}, nil
 }
-func (c *GooglePubSubConsumer) Messages() <-chan types.ConsumedMessage { return c.outputChan }
-func (c *GooglePubSubConsumer) Start(ctx context.Context) error {
+func (c *GooglePubsubConsumer) Messages() <-chan types.ConsumedMessage { return c.outputChan }
+func (c *GooglePubsubConsumer) Start(ctx context.Context) error {
 	c.logger.Info().Msg("Starting Pub/Sub message consumption...")
 	receiveCtx, cancel := context.WithCancel(ctx)
 	c.cancelSubscription = cancel
@@ -126,7 +129,7 @@ func (c *GooglePubSubConsumer) Start(ctx context.Context) error {
 	}()
 	return nil
 }
-func (c *GooglePubSubConsumer) Stop() error {
+func (c *GooglePubsubConsumer) Stop() error {
 	c.stopOnce.Do(func() {
 		c.logger.Info().Msg("Stopping Pub/Sub consumer...")
 		if c.cancelSubscription != nil {
@@ -148,4 +151,4 @@ func (c *GooglePubSubConsumer) Stop() error {
 	})
 	return nil
 }
-func (c *GooglePubSubConsumer) Done() <-chan struct{} { return c.doneChan }
+func (c *GooglePubsubConsumer) Done() <-chan struct{} { return c.doneChan }
