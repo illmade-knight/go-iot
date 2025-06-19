@@ -27,7 +27,7 @@ const (
 	testBigQueryRestPort      = "9050"
 )
 
-func GetDefaultConfig(projectID string, datasetTables map[string]string, schemaMappings map[string]interface{}) BigQueryConfig {
+func GetDefaultBigQueryConfig(projectID string, datasetTables map[string]string, schemaMappings map[string]interface{}) BigQueryConfig {
 	return BigQueryConfig{
 		GCImageContainer: GCImageContainer{
 			ImageContainer: ImageContainer{

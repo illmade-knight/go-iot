@@ -62,7 +62,7 @@ func TestBigQueryService_Integration_FullFlow(t *testing.T) {
 	bigqueryCtx, bigqueryCancel := context.WithTimeout(ctx, time.Second*20)
 	defer bigqueryCancel()
 
-	bigqueryCfg := emulators.GetDefaultConfig(testProjectID, map[string]string{testBigQueryDatasetID: testBigQueryTableID},
+	bigqueryCfg := emulators.GetDefaultBigQueryConfig(testProjectID, map[string]string{testBigQueryDatasetID: testBigQueryTableID},
 		map[string]interface{}{testBigQueryTableID: types.GardenMonitorReadings{}})
 	bigqueryOptions, bigqueryEmulatorCleanup := emulators.SetupBigQueryEmulator(t, bigqueryCtx, bigqueryCfg)
 	defer bigqueryEmulatorCleanup()
