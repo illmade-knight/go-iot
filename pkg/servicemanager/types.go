@@ -60,10 +60,9 @@ type DataflowSpec struct {
 
 // LifecyclePolicy defines the lifecycle management rules for a dataflow.
 type LifecyclePolicy struct {
-	Strategy          LifecycleStrategy `yaml:"strategy"`
-	KeepDatasetOnTest bool              `yaml:"keep_dataset_on_test,omitempty"`
-	KeepBucketOnTest  bool              `yaml:"keep_bucket_on_test,omitempty"`
-	AutoTeardownAfter string            `yaml:"auto_teardown_after,omitempty"`
+	Strategy            LifecycleStrategy `yaml:"strategy"`
+	KeepResourcesOnTest bool              `yaml:"keep_resources_on_test,omitempty"`
+	AutoTeardownAfter   string            `yaml:"auto_teardown_after,omitempty"`
 }
 
 // ResourcesSpec is a container for all the cloud resources defined in the system.

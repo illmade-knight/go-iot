@@ -10,7 +10,7 @@ require (
 	github.com/docker/go-connections v0.5.0
 	github.com/eclipse/paho.mqtt.golang v1.5.0
 	github.com/google/uuid v1.6.0
-	github.com/illmade-knight/go-iot/gen/go/protos/telemetry v0.0.0-20250619140441-cf0455176e65
+	github.com/illmade-knight/go-iot/gen/go/protos/telemetry v0.0.0-20250619201927-3bee43e5001d
 	github.com/rs/zerolog v1.34.0
 	github.com/stretchr/testify v1.10.0
 	github.com/testcontainers/testcontainers-go v0.37.0

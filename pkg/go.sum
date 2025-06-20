@@ -153,6 +153,8 @@ github.com/grpc-ecosystem/grpc-gateway/v2 v2.26.3 h1:5ZPtiqj0JL5oKWmcsq4VMaAW5uk
 github.com/grpc-ecosystem/grpc-gateway/v2 v2.26.3/go.mod h1:ndYquD05frm2vACXE1nsccT4oJzjhw2arTS2cpUD1PI=
 github.com/illmade-knight/go-iot/gen/go/protos/telemetry v0.0.0-20250619140441-cf0455176e65 h1:A7/G5qTi3rSZ8XonjHdlZ17VzCqSkdAOfyt9VFYhX7s=
 github.com/illmade-knight/go-iot/gen/go/protos/telemetry v0.0.0-20250619140441-cf0455176e65/go.mod h1:0AwBa8yg1oToVwG5CS2Ei2KBqDv+nhIr6SPAx0IhWBo=
+github.com/illmade-knight/go-iot/gen/go/protos/telemetry v0.0.0-20250619201927-3bee43e5001d h1:7Z1xCbhmnfQ1yO5ZYVCA37aAvzkXb/vlAJPmjxOh3pM=
+github.com/illmade-knight/go-iot/gen/go/protos/telemetry v0.0.0-20250619201927-3bee43e5001d/go.mod h1:0AwBa8yg1oToVwG5CS2Ei2KBqDv+nhIr6SPAx0IhWBo=
 github.com/kisielk/errcheck v1.5.0/go.mod h1:pFxgyoBC7bSaBwPgfKdkLd5X25qrDl4LWUI2bnpBCr8=
 github.com/kisielk/gotool v1.0.0/go.mod h1:XhKaO+MFFWcvkIS/tQcRk01m1F5IRFswLeQ+oQHNcck=
 github.com/klauspost/compress v1.17.4 h1:Ej5ixsIri7BrIjBkRZLTo6ghwrEtHFk7ijlczPW4fZ4=

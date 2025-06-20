@@ -394,15 +394,15 @@ func (sm *ServiceManager) TeardownDataflow(ctx context.Context, environment stri
 
 	dataflowConfig := sm.filterConfigForServices(fullConfig, serviceSet)
 
-	if targetDataflow.Lifecycle.KeepDatasetOnTest {
+	if targetDataflow.Lifecycle.KeepResourcesOnTest {
 		sm.logger.Info().
 			Str("dataflow", dataflowName).
-			Msg("'KeepDatasetOnTest' is true. BigQuery datasets will be excluded from teardown.")
+			Msg("'KeepResourcesOnTest' is true. BigQuery datasets will be excluded from teardown.")
 		dataflowConfig.Resources.BigQueryDatasets = nil
 		dataflowConfig.Resources.BigQueryTables = nil
 	}
 
-	if targetDataflow.Lifecycle.KeepBucketOnTest {
+	if targetDataflow.Lifecycle.KeepResourcesOnTest {
 		sm.logger.Info().
 			Str("dataflow", dataflowName).
 			Msg("'KeepGCSBucketOnTest' is true. GCS buckets will be excluded from teardown.")
