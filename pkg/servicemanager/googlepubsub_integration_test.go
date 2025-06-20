@@ -59,8 +59,8 @@ func setupEmulatorForAdapterTest(t *testing.T, ctx context.Context) (emulatorHos
 	}
 }
 
-// createAdapterTestYAMLFile creates a temporary YAML config file for testing.
-func createAdapterTestYAMLFile(t *testing.T, content string) string {
+// CreateAdapterTestYAMLFile creates a temporary YAML config file for testing.
+func CreateAdapterTestYAMLFile(t *testing.T, content string) string {
 	t.Helper()
 	tmpDir := t.TempDir()
 	filePath := filepath.Join(tmpDir, "adapter_test_config.yaml")
@@ -94,7 +94,7 @@ resources:
       ack_deadline_seconds: 42
 `, adapterTestProjectID, adapterTestProjectID, testTopicName, testSubName, testTopicName)
 
-	configFilePath := createAdapterTestYAMLFile(t, yamlContent)
+	configFilePath := CreateAdapterTestYAMLFile(t, yamlContent)
 	cfg, err := servicemanager.LoadAndValidateConfig(configFilePath)
 	require.NoError(t, err)
 

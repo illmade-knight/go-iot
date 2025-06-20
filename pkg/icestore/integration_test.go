@@ -12,7 +12,6 @@ import (
 	"fmt"
 	"github.com/illmade-knight/go-iot/pkg/helpers/emulators"
 	"os"
-	//"strings"
 	"testing"
 	"time"
 
@@ -24,14 +23,10 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"google.golang.org/api/iterator"
-	"google.golang.org/api/option"
 )
 
 // --- Test Constants ---
 const (
-	testPubsubImage = "gcr.io/google.com/cloudsdktool/cloud-sdk:emulators"
-	testPubsubPort  = "8085"
-
 	testProjectID      = "icestore-test-project"
 	testTopicID        = "icestore-test-topic"
 	testSubscriptionID = "icestore-test-sub"
@@ -177,7 +172,7 @@ func TestIceStorageService_Integration(t *testing.T) {
 
 			// --- Publish Test Messages ---
 			if len(tc.messagesToPublish) > 0 {
-				publisherClient, err := pubsub.NewClient(testCtx, testProjectID, option.WithEndpoint(os.Getenv("PUBSUB_EMULATOR_HOST")), option.WithoutAuthentication())
+				publisherClient, err := pubsub.NewClient(testCtx, testProjectID, pubsubClientOptions...)
 				require.NoError(t, err)
 				topic := publisherClient.Topic(testTopicID)
 
@@ -188,7 +183,7 @@ func TestIceStorageService_Integration(t *testing.T) {
 						Attributes:  map[string]string{"uid": msg.Payload.DeviceID, "location": msg.Location},
 						PublishTime: msg.PublishTime,
 					})
-					_, err := pubResult.Get(testCtx)
+					_, err = pubResult.Get(testCtx)
 					require.NoError(t, err)
 				}
 				topic.Stop()

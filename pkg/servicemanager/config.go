@@ -31,50 +31,29 @@ func LoadAndValidateConfig(configPath string) (*TopLevelConfig, error) {
 
 	// Perform basic validation
 	if config.DefaultProjectID == "" {
-		// Depending on requirements, this could be a warning if environments always override it,
-		// or an error if it's expected to be a global default.
-		// For now, let's consider it a potential issue to flag.
-		// return nil, fmt.Errorf("validation error: default_project_id is missing")
 		fmt.Printf("Warning: default_project_id is not set in the configuration.\n")
 	}
 
-	// Validate presence of Pub/Sub Topics
-	if len(config.Resources.PubSubTopics) == 0 {
-		return nil, fmt.Errorf("validation error: no pubsub_topics defined in resources")
+	// --- Modified Validation Logic ---
+	// Removed mandatory checks for Pub/Sub Topics and Subscriptions.
+	// Now, a config with only GCS buckets will be valid.
+
+	// You can add a check if at least one GCS bucket is defined if it's critical
+	if len(config.Resources.GCSBuckets) == 0 &&
+		len(config.Resources.PubSubTopics) == 0 &&
+		len(config.Resources.PubSubSubscriptions) == 0 &&
+		len(config.Resources.BigQueryDatasets) == 0 &&
+		len(config.Resources.BigQueryTables) == 0 {
+		return nil, fmt.Errorf("validation error: no resources (GCS buckets, Pub/Sub, BigQuery) defined in resources")
 	}
-	for i, topic := range config.Resources.PubSubTopics {
-		if topic.Name == "" {
-			return nil, fmt.Errorf("validation error: pubsub_topics[%d] is missing a name", i)
+
+	// Example: If you *still* want to validate details of GCS buckets if they exist:
+	for i, bucket := range config.Resources.GCSBuckets {
+		if bucket.Name == "" {
+			return nil, fmt.Errorf("validation error: gcs_buckets[%d] is missing a name", i)
 		}
+		// Add more specific GCS bucket validation rules here if needed
 	}
-
-	// Validate presence of Pub/Sub Subscriptions
-	if len(config.Resources.PubSubSubscriptions) == 0 {
-		return nil, fmt.Errorf("validation error: no pubsub_subscriptions defined in resources")
-	}
-	for i, sub := range config.Resources.PubSubSubscriptions {
-		if sub.Name == "" {
-			return nil, fmt.Errorf("validation error: pubsub_subscriptions[%d] is missing a name", i)
-		}
-		if sub.Topic == "" {
-			return nil, fmt.Errorf("validation error: pubsub_subscriptions[%d] (name: %s) is missing a topic", i, sub.Name)
-		}
-	}
-
-	// Further validation for other resource types (BigQuery, GCS) can be added here as needed.
-	// For "service definitions" check, we're ensuring that core communication infrastructure (topics/subs)
-	// is defined. If "services" were an explicit top-level key in your YAML, we'd check that too.
-	// Given the current YAML, checking for Pub/Sub resources covers a key aspect of service interaction.
-
-	// Example: Check if at least one BigQuery dataset is defined if it's critical
-	// if len(config.Resources.BigQueryDatasets) == 0 {
-	// 	return nil, fmt.Errorf("validation error: no bigquery_datasets defined")
-	// }
-
-	// Example: Check if at least one GCS bucket is defined if it's critical
-	// if len(config.Resources.GCSBuckets) == 0 {
-	//  return nil, fmt.Errorf("validation error: no gcs_buckets defined")
-	// }
 
 	fmt.Printf("Configuration loaded and validated successfully from '%s'\n", configPath)
 	return &config, nil

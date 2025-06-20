@@ -15,7 +15,6 @@ import (
 	"time"
 
 	"cloud.google.com/go/pubsub"
-	mqtt "github.com/eclipse/paho.mqtt.golang"
 	"github.com/illmade-knight/go-iot/pkg/mqttconverter"
 	"github.com/rs/zerolog"
 	"github.com/stretchr/testify/assert"
@@ -40,59 +39,6 @@ var (
 func init() {
 	testLogger = zerolog.Nop() // Disable logging for cleaner test output by default
 }
-
-// createTestMqttPublisherClient creates an MQTT client for publishing test messages.
-func createTestMqttPublisherClient(brokerURL string, clientID string) (mqtt.Client, error) {
-	opts := mqtt.NewClientOptions().
-		AddBroker(brokerURL).
-		SetClientID(clientID).
-		SetConnectTimeout(10 * time.Second)
-	client := mqtt.NewClient(opts)
-	if token := client.Connect(); token.WaitTimeout(15*time.Second) && token.Error() != nil {
-		return nil, fmt.Errorf("test mqtt publisher Connect(): %w", token.Error())
-	}
-	return client, nil
-}
-
-//
-//// setupMosquittoContainer starts a Mosquitto container.
-//func setupMosquittoContainer(t *testing.T, ctx context.Context) (brokerURL string, cleanupFunc func()) {
-//	t.Helper()
-//	mosquittoConfContent := `
-//persistence false
-//listener 1883
-//allow_anonymous true
-//`
-//	tempDir := t.TempDir()
-//	confPath := filepath.Join(tempDir, "mosquitto.conf")
-//	err := os.WriteFile(confPath, []byte(mosquittoConfContent), 0644)
-//	require.NoError(t, err, "Failed to write temporary mosquitto.conf")
-//
-//	req := testcontainers.ContainerRequest{
-//		Image:        "eclipse-mosquitto:2.0",
-//		ExposedPorts: []string{"1883/tcp"},
-//		WaitingFor:   wait.ForListeningPort("1883/tcp").WithStartupTimeout(60 * time.Second),
-//		Files: []testcontainers.ContainerFile{
-//			{HostFilePath: confPath, ContainerFilePath: "/mosquitto/config/mosquitto.conf", FileMode: 0o644},
-//		},
-//		Cmd: []string{"mosquitto", "-c", "/mosquitto/config/mosquitto.conf"},
-//	}
-//	container, err := testcontainers.GenericContainer(ctx, testcontainers.GenericContainerRequest{ContainerRequest: req, Started: true})
-//	require.NoError(t, err, "Failed to start Mosquitto container")
-//
-//	host, err := container.Host(ctx)
-//	require.NoError(t, err)
-//	port, err := container.MappedPort(ctx, "1883/tcp")
-//	require.NoError(t, err)
-//	brokerURL = fmt.Sprintf("tcp://%s:%s", host, port.Port())
-//	t.Logf("Mosquitto container started, broker URL: %s", brokerURL)
-//
-//	return brokerURL, func() {
-//		if err := container.Terminate(ctx); err != nil {
-//			t.Logf("Failed to terminate Mosquitto container: %v", err)
-//		}
-//	}
-//}
 
 func TestIngestionService_Integration_MQTT_To_PubSub(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)

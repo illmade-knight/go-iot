@@ -62,6 +62,7 @@ type DataflowSpec struct {
 type LifecyclePolicy struct {
 	Strategy          LifecycleStrategy `yaml:"strategy"`
 	KeepDatasetOnTest bool              `yaml:"keep_dataset_on_test,omitempty"`
+	KeepBucketOnTest  bool              `yaml:"keep_bucket_on_test,omitempty"`
 	AutoTeardownAfter string            `yaml:"auto_teardown_after,omitempty"`
 }
 

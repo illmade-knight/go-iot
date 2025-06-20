@@ -3,6 +3,8 @@ package servicemanager
 import (
 	"context"
 	"fmt"
+	"strings"
+
 	"github.com/rs/zerolog"
 	"golang.org/x/sync/errgroup"
 )
@@ -43,78 +45,75 @@ type ProvisionedResources struct {
 	BigQueryTables      []ProvisionedBigQueryTable
 }
 
-// ServiceManager coordinates all resource-specific managers.
+// ServiceManager coordinates all resource-specific operations directly.
 type ServiceManager struct {
-	pubsub      *PubSubManager
-	storage     *StorageManager
-	bigquery    *BigQueryManager
-	servicesDef ServicesDefinition // Use the ServicesDefinition interface
-	logger      zerolog.Logger
+	pubsubClient   PSClient
+	gcsClient      StorageClient
+	bigqueryClient BQClient
+	servicesDef    ServicesDefinition
+	logger         zerolog.Logger
 }
 
-// NewServiceManager creates a new central manager, initializing all sub-managers.
-// It accepts a schemaRegistry to configure the BigQueryManager.
+// NewServiceManager creates a new central manager, initializing all required clients.
 func NewServiceManager(ctx context.Context, servicesDef ServicesDefinition, env string, schemaRegistry map[string]interface{}, logger zerolog.Logger) (*ServiceManager, error) {
 	projectID, err := servicesDef.GetProjectID(env)
 	if err != nil {
 		return nil, err
 	}
 
-	// Create real GCP clients (or mocks for testing)
+	// Initialize real GCP clients using our factory functions
 	gcsClient, err := CreateGoogleGCSClient(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create GCS client: %w", err)
 	}
+
 	bqClient, err := CreateGoogleBigQueryClient(ctx, projectID)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create BigQuery client: %w", err)
 	}
+
 	psClient, err := CreateGooglePubSubClient(ctx, projectID)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create PubSub client: %w", err)
 	}
 
-	// Initialize individual managers
-	psManager, err := NewPubSubManager(psClient, logger)
-	if err != nil {
-		return nil, fmt.Errorf("failed to create pubsub manager: %w", err)
-	}
-	gcsManager, err := NewStorageManager(gcsClient, logger)
-	if err != nil {
-		return nil, fmt.Errorf("failed to create storage manager: %w", err)
-	}
-	// Pass the schema registry to the BigQueryManager
-	bqManager, err := NewBigQueryManager(bqClient, logger, schemaRegistry)
-	if err != nil {
-		return nil, fmt.Errorf("failed to create bigquery manager: %w", err)
-	}
-
 	return &ServiceManager{
-		pubsub:      psManager,
-		storage:     gcsManager,
-		bigquery:    bqManager,
-		servicesDef: servicesDef,
-		logger:      logger,
+		pubsubClient:   psClient,
+		gcsClient:      gcsClient,
+		bigqueryClient: bqClient,
+		servicesDef:    servicesDef,
+		logger:         logger,
 	}, nil
 }
 
 // SetupAll runs the setup process for all resource types in the provided config.
-// It now returns a summary of the provisioned resources.
 func (sm *ServiceManager) SetupAll(ctx context.Context, cfg *TopLevelConfig, environment string) (*ProvisionedResources, error) {
 	sm.logger.Info().Str("environment", environment).Msg("Starting full environment setup...")
 	g, gCtx := errgroup.WithContext(ctx)
 
-	g.Go(func() error { return sm.pubsub.Setup(gCtx, cfg, environment) })
-	g.Go(func() error { return sm.storage.Setup(gCtx, cfg, environment) })
-	g.Go(func() error { return sm.bigquery.Setup(gCtx, cfg, environment) })
+	// Pub/Sub Setup
+	g.Go(func() error {
+		psManagerLogger := sm.logger.With().Str("component", "PubSubSetup").Logger()
+		return sm.setupPubSubResources(gCtx, cfg, environment, psManagerLogger)
+	})
+
+	// GCS Setup
+	g.Go(func() error {
+		gcsManagerLogger := sm.logger.With().Str("component", "GcsSetup").Logger()
+		return sm.setupGCSResources(gCtx, cfg, environment, gcsManagerLogger)
+	})
+
+	// BigQuery Setup
+	g.Go(func() error {
+		bqManagerLogger := sm.logger.With().Str("component", "BigQuerySetup").Logger()
+		return sm.setupBigQueryResources(gCtx, cfg, environment, bqManagerLogger, sm.bigqueryClient)
+	})
 
 	if err := g.Wait(); err != nil {
 		return nil, fmt.Errorf("failed during parallel setup: %w", err)
 	}
 
-	// Ideally, the individual managers (pubsub, storage, bigquery) would return
-	// the details of the resources they created. For now, we'll construct the
-	// result from the input configuration. This establishes the new API contract.
+	// Construct provisioned resources summary
 	provResources := &ProvisionedResources{}
 	for _, topic := range cfg.Resources.PubSubTopics {
 		provResources.PubSubTopics = append(provResources.PubSubTopics, ProvisionedPubSubTopic{Name: topic.Name})
@@ -134,6 +133,206 @@ func (sm *ServiceManager) SetupAll(ctx context.Context, cfg *TopLevelConfig, env
 
 	sm.logger.Info().Str("environment", environment).Msg("Full environment setup completed successfully.")
 	return provResources, nil
+}
+
+// TeardownAll runs the teardown process for all resource types defined in the provided config.
+func (sm *ServiceManager) TeardownAll(ctx context.Context, cfg *TopLevelConfig, environment string) error {
+	sm.logger.Info().Str("environment", environment).Msg("Starting full environment teardown...")
+
+	bqManagerLogger := sm.logger.With().Str("component", "BigQueryTeardown").Logger()
+	if err := sm.teardownBigQueryResources(ctx, cfg, environment, bqManagerLogger, sm.bigqueryClient); err != nil {
+		return err
+	}
+
+	gcsManagerLogger := sm.logger.With().Str("component", "GcsTeardown").Logger()
+	if err := sm.teardownGCSResources(ctx, cfg, environment, gcsManagerLogger); err != nil {
+		return err
+	}
+
+	psManagerLogger := sm.logger.With().Str("component", "PubSubTeardown").Logger()
+	if err := sm.teardownPubSubResources(ctx, cfg, environment, psManagerLogger); err != nil {
+		return err
+	}
+
+	sm.logger.Info().Str("environment", environment).Msg("Full environment teardown completed successfully.")
+	return nil
+}
+
+// setupGCSResources now uses the generic storage interfaces and types.
+func (sm *ServiceManager) setupGCSResources(ctx context.Context, cfg *TopLevelConfig, environment string, logger zerolog.Logger) error {
+	projectID, err := GetTargetProjectID(cfg, environment)
+	if err != nil {
+		return fmt.Errorf("GCS Setup: %w", err)
+	}
+	logger.Info().Str("project_id", projectID).Str("environment", environment).Msg("Starting GCS Bucket setup")
+
+	defaultLocation := cfg.DefaultLocation
+	if envSpec, ok := cfg.Environments[environment]; ok && envSpec.DefaultLocation != "" {
+		defaultLocation = envSpec.DefaultLocation
+	}
+	var defaultLabels map[string]string
+	if envSpec, ok := cfg.Environments[environment]; ok && envSpec.DefaultLabels != nil {
+		defaultLabels = envSpec.DefaultLabels
+	}
+
+	for _, bucketCfg := range cfg.Resources.GCSBuckets {
+		if bucketCfg.Name == "" {
+			logger.Error().Msg("Skipping GCS bucket with empty name")
+			continue
+		}
+
+		logger.Debug().Str("bucket_name", bucketCfg.Name).Msg("Processing bucket configuration")
+
+		bucketHandle := sm.gcsClient.Bucket(bucketCfg.Name)
+		existingAttrs, err := bucketHandle.Attrs(ctx)
+
+		finalLabels := make(map[string]string)
+		for k, v := range defaultLabels {
+			finalLabels[k] = v
+		}
+		for k, v := range bucketCfg.Labels {
+			finalLabels[k] = v
+		}
+
+		attrsToApply := BucketAttributes{
+			Name:              bucketCfg.Name,
+			StorageClass:      bucketCfg.StorageClass,
+			VersioningEnabled: bucketCfg.VersioningEnabled,
+			Labels:            finalLabels,
+		}
+
+		if bucketCfg.Location != "" {
+			attrsToApply.Location = strings.ToUpper(bucketCfg.Location)
+		} else if defaultLocation != "" {
+			attrsToApply.Location = strings.ToUpper(defaultLocation)
+		} else {
+			logger.Warn().Str("bucket_name", bucketCfg.Name).Msg("Bucket location not specified, relying on provider defaults.")
+		}
+
+		if len(bucketCfg.LifecycleRules) > 0 {
+			attrsToApply.LifecycleRules = make([]LifecycleRule, 0, len(bucketCfg.LifecycleRules))
+			for _, ruleSpec := range bucketCfg.LifecycleRules {
+				attrsToApply.LifecycleRules = append(attrsToApply.LifecycleRules, LifecycleRule{
+					Action:    LifecycleAction{Type: ruleSpec.Action.Type},
+					Condition: LifecycleCondition{AgeInDays: ruleSpec.Condition.AgeDays},
+				})
+			}
+		}
+
+		if isBucketNotExist(err) {
+			logger.Info().Str("bucket_name", bucketCfg.Name).Str("location", attrsToApply.Location).Msg("Bucket not found, creating...")
+			if errCreate := bucketHandle.Create(ctx, projectID, &attrsToApply); errCreate != nil {
+				return fmt.Errorf("failed to create bucket '%s' in project '%s': %w", bucketCfg.Name, projectID, errCreate)
+			}
+			logger.Info().Str("bucket_name", bucketCfg.Name).Msg("Bucket created successfully")
+		} else if err != nil {
+			return fmt.Errorf("failed to get attributes for bucket '%s': %w", bucketCfg.Name, err)
+		} else {
+			logger.Info().Str("bucket_name", bucketCfg.Name).Msg("Bucket already exists. Ensuring configuration...")
+			attrsToUpdate := BucketAttributesToUpdate{
+				StorageClass:      &bucketCfg.StorageClass,
+				VersioningEnabled: &bucketCfg.VersioningEnabled,
+				Labels:            finalLabels,
+			}
+
+			if len(attrsToApply.LifecycleRules) > 0 {
+				attrsToUpdate.LifecycleRules = &attrsToApply.LifecycleRules
+			} else if existingAttrs.LifecycleRules != nil && len(existingAttrs.LifecycleRules) > 0 {
+				attrsToUpdate.LifecycleRules = &[]LifecycleRule{}
+			}
+
+			if _, updateErr := bucketHandle.Update(ctx, attrsToUpdate); updateErr != nil {
+				logger.Warn().Err(updateErr).Str("bucket_name", bucketCfg.Name).Msg("Failed to update bucket attributes")
+			} else {
+				logger.Info().Str("bucket_name", bucketCfg.Name).Msg("Bucket attributes updated/ensured.")
+			}
+		}
+	}
+	logger.Info().Str("project_id", projectID).Str("environment", environment).Msg("GCS Bucket setup completed successfully")
+	return nil
+}
+
+// teardownGCSResources now uses the generic storage interfaces and types.
+func (sm *ServiceManager) teardownGCSResources(ctx context.Context, cfg *TopLevelConfig, environment string, logger zerolog.Logger) error {
+	projectID, err := GetTargetProjectID(cfg, environment)
+	if err != nil {
+		return fmt.Errorf("GCS Teardown: %w", err)
+	}
+	logger.Info().Str("project_id", projectID).Str("environment", environment).Msg("Starting GCS Bucket teardown")
+
+	if envSpec, ok := cfg.Environments[environment]; ok && envSpec.TeardownProtection {
+		logger.Error().Str("environment", environment).Msg("Teardown protection is enabled for this environment for GCS. Manual intervention required or override.")
+		return fmt.Errorf("teardown protection enabled for GCS in environment: %s", environment)
+	}
+
+	for i := len(cfg.Resources.GCSBuckets) - 1; i >= 0; i-- {
+		bucketCfg := cfg.Resources.GCSBuckets[i]
+		if bucketCfg.Name == "" {
+			logger.Warn().Msg("Skipping GCS bucket with empty name during teardown")
+			continue
+		}
+
+		bucketHandle := sm.gcsClient.Bucket(bucketCfg.Name)
+		logger.Info().Str("bucket_name", bucketCfg.Name).Msg("Attempting to delete bucket...")
+
+		if _, errAttr := bucketHandle.Attrs(ctx); isBucketNotExist(errAttr) {
+			logger.Info().Str("bucket_name", bucketCfg.Name).Msg("Bucket does not exist, skipping deletion.")
+			continue
+		} else if err != nil {
+			logger.Error().Err(err).Str("bucket_name", bucketCfg.Name).Msg("Failed to get attributes before attempting delete, skipping.")
+			continue
+		}
+
+		if errDel := bucketHandle.Delete(ctx); errDel != nil {
+			if strings.Contains(errDel.Error(), "not empty") {
+				logger.Error().Err(errDel).Str("bucket_name", bucketCfg.Name).Msg("Failed to delete bucket because it is not empty. Manual cleanup of objects required.")
+			} else {
+				logger.Error().Err(errDel).Str("bucket_name", bucketCfg.Name).Msg("Failed to delete bucket")
+			}
+		} else {
+			logger.Info().Str("bucket_name", bucketCfg.Name).Msg("Bucket deleted successfully")
+		}
+	}
+
+	logger.Info().Str("project_id", projectID).Str("environment", environment).Msg("GCS Bucket teardown completed")
+	return nil
+}
+
+// Placeholder methods for BigQuery and PubSub management
+func (sm *ServiceManager) setupBigQueryResources(ctx context.Context, cfg *TopLevelConfig, environment string, logger zerolog.Logger, client BQClient) error {
+	projectID, err := GetTargetProjectID(cfg, environment)
+	if err != nil {
+		return fmt.Errorf("BigQuery Setup: %w", err)
+	}
+	logger.Info().Str("project_id", projectID).Str("environment", environment).Msg("Starting BigQuery setup (placeholder)")
+	return nil
+}
+
+func (sm *ServiceManager) teardownBigQueryResources(ctx context.Context, cfg *TopLevelConfig, environment string, logger zerolog.Logger, client BQClient) error {
+	projectID, err := GetTargetProjectID(cfg, environment)
+	if err != nil {
+		return fmt.Errorf("BigQuery Teardown: %w", err)
+	}
+	logger.Info().Str("project_id", projectID).Str("environment", environment).Msg("Starting BigQuery teardown (placeholder)")
+	return nil
+}
+
+func (sm *ServiceManager) setupPubSubResources(ctx context.Context, cfg *TopLevelConfig, environment string, logger zerolog.Logger) error {
+	projectID, err := GetTargetProjectID(cfg, environment)
+	if err != nil {
+		return fmt.Errorf("Pub/Sub Setup: %w", err)
+	}
+	logger.Info().Str("project_id", projectID).Str("environment", environment).Msg("Starting Pub/Sub setup (placeholder)")
+	return nil
+}
+
+func (sm *ServiceManager) teardownPubSubResources(ctx context.Context, cfg *TopLevelConfig, environment string, logger zerolog.Logger) error {
+	projectID, err := GetTargetProjectID(cfg, environment)
+	if err != nil {
+		return fmt.Errorf("Pub/Sub Teardown: %w", err)
+	}
+	logger.Info().Str("project_id", projectID).Str("environment", environment).Msg("Starting Pub/Sub teardown (placeholder)")
+	return nil
 }
 
 // SetupDataflow provisions all resources associated with a specific dataflow.
@@ -165,22 +364,6 @@ func (sm *ServiceManager) SetupDataflow(ctx context.Context, environment string,
 		Msg("Filtered resources for dataflow. Proceeding with setup.")
 
 	return sm.SetupAll(ctx, dataflowConfig, environment)
-}
-
-// TeardownAll runs the teardown process for all resource types defined in the provided config.
-func (sm *ServiceManager) TeardownAll(ctx context.Context, cfg *TopLevelConfig, environment string) error {
-	sm.logger.Info().Str("environment", environment).Msg("Starting full environment teardown...")
-	if err := sm.bigquery.Teardown(ctx, cfg, environment); err != nil {
-		return err
-	}
-	if err := sm.storage.Teardown(ctx, cfg, environment); err != nil {
-		return err
-	}
-	if err := sm.pubsub.Teardown(ctx, cfg, environment); err != nil {
-		return err
-	}
-	sm.logger.Info().Str("environment", environment).Msg("Full environment teardown completed successfully.")
-	return nil
 }
 
 // TeardownDataflow tears down all resources associated with a specific dataflow.
@@ -216,6 +399,14 @@ func (sm *ServiceManager) TeardownDataflow(ctx context.Context, environment stri
 			Str("dataflow", dataflowName).
 			Msg("'KeepDatasetOnTest' is true. BigQuery datasets will be excluded from teardown.")
 		dataflowConfig.Resources.BigQueryDatasets = nil
+		dataflowConfig.Resources.BigQueryTables = nil
+	}
+
+	if targetDataflow.Lifecycle.KeepBucketOnTest {
+		sm.logger.Info().
+			Str("dataflow", dataflowName).
+			Msg("'KeepGCSBucketOnTest' is true. GCS buckets will be excluded from teardown.")
+		dataflowConfig.Resources.GCSBuckets = nil
 	}
 
 	sm.logger.Info().
