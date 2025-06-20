@@ -175,10 +175,9 @@ func TestGCSBucketHandleAdapter_Update(t *testing.T) {
 	adapter := &gcsBucketHandleAdapter{bucket: mockHandle}
 
 	// Define the generic update request
-	versioning := true
 	storageClass := "NEARLINE"
 	updateRequest := BucketAttributesToUpdate{
-		VersioningEnabled: &versioning,
+		VersioningEnabled: false,
 		StorageClass:      &storageClass,
 		Labels:            map[string]string{"new": "label", "env": "prod"},
 	}

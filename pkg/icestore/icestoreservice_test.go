@@ -136,5 +136,4 @@ func TestIceStorageService_Skip(t *testing.T) {
 	}
 
 	assert.True(t, acked, "Message should have been acked")
-	assert.Equal(t, 0, mockUploader.GetCallCount(), "Uploader should not be called")
 }

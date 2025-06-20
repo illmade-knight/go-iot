@@ -1,5 +1,10 @@
 package servicemanager
 
+import (
+	"gopkg.in/yaml.v3"
+	"time"
+)
+
 // This file defines the Go structs that map directly to the structure of the
 // services.yaml file. The `yaml:"..."` tags are essential for the parser
 // to know which YAML key corresponds to which Go struct field.
@@ -67,35 +72,35 @@ type LifecyclePolicy struct {
 
 // ResourcesSpec is a container for all the cloud resources defined in the system.
 type ResourcesSpec struct {
-	PubSubTopics        []PubSubTopic        `yaml:"pubsub_topics"`
-	PubSubSubscriptions []PubSubSubscription `yaml:"pubsub_subscriptions"`
-	BigQueryDatasets    []BigQueryDataset    `yaml:"bigquery_datasets"`
-	BigQueryTables      []BigQueryTable      `yaml:"bigquery_tables"`
-	GCSBuckets          []GCSBucket          `yaml:"gcs_buckets"`
+	PubSubTopics        []MessagingTopicConfig        `yaml:"pubsub_topics"`
+	PubSubSubscriptions []MessagingSubscriptionConfig `yaml:"pubsub_subscriptions"`
+	BigQueryDatasets    []BigQueryDataset             `yaml:"bigquery_datasets"`
+	BigQueryTables      []BigQueryTable               `yaml:"bigquery_tables"`
+	GCSBuckets          []GCSBucket                   `yaml:"gcs_buckets"`
 }
 
-// PubSubTopic defines the configuration for a Pub/Sub topic.
-type PubSubTopic struct {
+// MessagingTopicConfig defines the configuration for a Pub/Sub topic.
+type MessagingTopicConfig struct {
 	Name            string            `yaml:"name"`
 	Labels          map[string]string `yaml:"labels,omitempty"`
 	ProducerService string            `yaml:"producer_service,omitempty"`
 }
 
-// PubSubSubscription defines the configuration for a Pub/Sub subscription.
-type PubSubSubscription struct {
+// MessagingSubscriptionConfig defines the configuration for a Pub/Sub subscription.
+type MessagingSubscriptionConfig struct {
 	Name               string            `yaml:"name"`
 	Topic              string            `yaml:"topic"`
 	AckDeadlineSeconds int               `yaml:"ack_deadline_seconds,omitempty"`
-	MessageRetention   string            `yaml:"message_retention_duration,omitempty"`
+	MessageRetention   Duration          `yaml:"message_retention_duration,omitempty"`
 	RetryPolicy        *RetryPolicySpec  `yaml:"retry_policy,omitempty"`
 	Labels             map[string]string `yaml:"labels,omitempty"`
 	ConsumerService    string            `yaml:"consumer_service,omitempty"`
 }
 
-// RetryPolicySpec defines the retry policy for a Pub/Sub subscription.
+// RetryPolicySpec should be updated to use the new Duration type.
 type RetryPolicySpec struct {
-	MinimumBackoff string `yaml:"minimum_backoff"`
-	MaximumBackoff string `yaml:"maximum_backoff"`
+	MinimumBackoff Duration `yaml:"minimum_backoff"`
+	MaximumBackoff Duration `yaml:"maximum_backoff"`
 }
 
 // BigQueryDataset defines the configuration for a BigQuery dataset.
@@ -144,4 +149,21 @@ type LifecycleActionSpec struct {
 // LifecycleConditionSpec defines the conditions for a lifecycle rule.
 type LifecycleConditionSpec struct {
 	AgeDays int `yaml:"age_days,omitempty"`
+}
+
+// Duration is a custom type that wraps time.Duration to implement yaml.Unmarshaler.
+type Duration time.Duration
+
+// UnmarshalYAML implements the yaml.Unmarshaler interface, allowing "15s" to be parsed directly to a duration.
+func (d *Duration) UnmarshalYAML(value *yaml.Node) error {
+	var s string
+	if err := value.Decode(&s); err != nil {
+		return err
+	}
+	parsed, err := time.ParseDuration(s)
+	if err != nil {
+		return err
+	}
+	*d = Duration(parsed)
+	return nil
 }

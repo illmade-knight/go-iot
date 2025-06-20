@@ -9,7 +9,7 @@ import (
 	"cloud.google.com/go/storage"
 )
 
-// gcsBucketHandle is a new interface that abstracts the methods from *storage.BucketHandle
+// gcsBucketHandle is an interface that abstracts the methods from *storage.BucketHandle
 // that our adapter uses. This is the key to allowing mocks to be used in testing.
 type gcsBucketHandle interface {
 	Attrs(ctx context.Context) (*storage.BucketAttrs, error)
@@ -19,8 +19,9 @@ type gcsBucketHandle interface {
 	IAM() *iam.Handle
 }
 
-// --- Conversion Functions (No Change) ---
+// --- Conversion Functions ---
 
+// fromGCSBucketAttrs converts GCS-specific bucket attributes to our generic BucketAttributes struct.
 func fromGCSBucketAttrs(gcsAttrs *storage.BucketAttrs) *BucketAttributes {
 	if gcsAttrs == nil {
 		return nil
@@ -44,6 +45,7 @@ func fromGCSBucketAttrs(gcsAttrs *storage.BucketAttrs) *BucketAttributes {
 	return attrs
 }
 
+// toGCSBucketAttrs converts our generic BucketAttributes struct to a GCS-specific one for creation.
 func toGCSBucketAttrs(attrs *BucketAttributes) *storage.BucketAttrs {
 	if attrs == nil {
 		return nil
@@ -69,14 +71,14 @@ func toGCSBucketAttrs(attrs *BucketAttributes) *storage.BucketAttrs {
 	return gcsAttrs
 }
 
+// toGCSBucketAttrsToUpdate converts our generic update struct to a GCS-specific one.
 func toGCSBucketAttrsToUpdate(attrs BucketAttributesToUpdate, existingGCSAttrs *storage.BucketAttrs) storage.BucketAttrsToUpdate {
 	gcsUpdate := storage.BucketAttrsToUpdate{}
+
 	if attrs.StorageClass != nil {
 		gcsUpdate.StorageClass = *attrs.StorageClass
 	}
-	if attrs.VersioningEnabled != nil {
-		gcsUpdate.VersioningEnabled = attrs.VersioningEnabled
-	}
+
 	if attrs.Labels != nil {
 		for k, v := range attrs.Labels {
 			gcsUpdate.SetLabel(k, v)
@@ -105,7 +107,7 @@ func toGCSBucketAttrsToUpdate(attrs BucketAttributesToUpdate, existingGCSAttrs *
 	return gcsUpdate
 }
 
-// --- GCS Iterator Adapter (No Change) ---
+// --- GCS Iterator Adapter ---
 
 type gcsBucketIteratorAdapter struct {
 	it *storage.BucketIterator
@@ -119,11 +121,10 @@ func (a *gcsBucketIteratorAdapter) Next() (*BucketAttributes, error) {
 	return fromGCSBucketAttrs(gcsAttrs), nil
 }
 
-// --- GCS Handle/Client Adapters (Updated) ---
+// --- GCS Handle/Client Adapters ---
 
 // gcsBucketHandleAdapter wraps a GCS bucket handle (real or mock) to conform to our StorageBucketHandle interface.
 type gcsBucketHandleAdapter struct {
-	// This now uses the interface, which makes the adapter testable.
 	bucket gcsBucketHandle
 }
 
@@ -167,7 +168,6 @@ type gcsClientAdapter struct {
 }
 
 func (a *gcsClientAdapter) Bucket(name string) StorageBucketHandle {
-	// The real *storage.BucketHandle returned by the client satisfies the gcsBucketHandle interface.
 	return &gcsBucketHandleAdapter{bucket: a.client.Bucket(name)}
 }
 

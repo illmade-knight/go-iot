@@ -7,7 +7,7 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
-// TopLevelConfig, EnvironmentSpec, ResourcesSpec, PubSubTopic, PubSubSubscription,
+// TopLevelConfig, EnvironmentSpec, ResourcesSpec, MessagingTopicConfig, MessagingSubscriptionConfig,
 // RetryPolicySpec, BigQueryDataset, BigQueryTable, GCSBucket, LifecycleRuleSpec,
 // LifecycleActionSpec, LifecycleConditionSpec structs are assumed to be defined
 // in another file within this package (e.g., from the manager_config_go_structs artifact).

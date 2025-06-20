@@ -38,7 +38,7 @@ type BucketAttributes struct {
 // Using pointers allows distinguishing between a field to be cleared vs. not updated.
 type BucketAttributesToUpdate struct {
 	StorageClass      *string
-	VersioningEnabled *bool
+	VersioningEnabled bool
 	Labels            map[string]string // The full, desired set of labels. The adapter will compute the diff.
 	LifecycleRules    *[]LifecycleRule  // Pointer to a slice to allow clearing rules with an empty slice.
 }

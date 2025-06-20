@@ -130,7 +130,7 @@ func (sm *StorageManager) Setup(ctx context.Context, cfg *TopLevelConfig, enviro
 			// Use our generic BucketAttributesToUpdate struct
 			attrsToUpdate := BucketAttributesToUpdate{
 				StorageClass:      &bucketCfg.StorageClass,
-				VersioningEnabled: &bucketCfg.VersioningEnabled,
+				VersioningEnabled: bucketCfg.VersioningEnabled,
 				Labels:            finalLabels, // Pass the full desired state
 			}
 
