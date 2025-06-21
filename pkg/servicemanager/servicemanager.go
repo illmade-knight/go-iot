@@ -49,7 +49,7 @@ type ProvisionedResources struct {
 type ServiceManager struct {
 	messagingManager *MessagingManager
 	storageManager   *StorageManager
-	bigqueryClient   BQClient // BQ can be refactored into a manager later
+	bigqueryManager  *BigQueryManager
 	servicesDef      ServicesDefinition
 	logger           zerolog.Logger
 }
@@ -61,13 +61,14 @@ func NewServiceManager(ctx context.Context, servicesDef ServicesDefinition, env 
 		return nil, err
 	}
 
+	msgClient, err := CreateGoogleMessagingClient(ctx, projectID)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create Messaging client: %w", err)
+	}
+
 	gcsClient, err := CreateGoogleGCSClient(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create GCS client: %w", err)
-	}
-	storageManager, err := NewStorageManager(gcsClient, logger)
-	if err != nil {
-		return nil, fmt.Errorf("failed to create Storage manager: %w", err)
 	}
 
 	bqClient, err := CreateGoogleBigQueryClient(ctx, projectID)
@@ -75,11 +76,28 @@ func NewServiceManager(ctx context.Context, servicesDef ServicesDefinition, env 
 		return nil, fmt.Errorf("failed to create BigQuery client: %w", err)
 	}
 
-	msgClient, err := CreateGoogleMessagingClient(ctx, projectID)
-	if err != nil {
-		return nil, fmt.Errorf("failed to create Messaging client: %w", err)
+	return NewServiceManagerFromClients(msgClient, gcsClient, bqClient, servicesDef, schemaRegistry, logger)
+}
+
+// NewServiceManagerFromClients creates a new central manager from pre-existing clients.
+func NewServiceManagerFromClients(mc MessagingClient, sc StorageClient, bc BQClient, servicesDef ServicesDefinition, schemaRegistry map[string]interface{}, logger zerolog.Logger) (*ServiceManager, error) {
+	if mc == nil || sc == nil || bc == nil {
+		return nil, errors.New("all managers and clients must be non-nil")
 	}
-	messagingManager, err := NewMessagingManager(msgClient, logger)
+	if servicesDef == nil {
+		return nil, errors.New("services definition cannot be nil")
+	}
+
+	messagingManager, err := NewMessagingManager(mc, logger)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create Messaging manager: %w", err)
+	}
+	storageManager, err := NewStorageManager(sc, logger)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create Messaging manager: %w", err)
+	}
+
+	bigQueryManager, err := NewBigQueryManager(bc, logger, schemaRegistry)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create Messaging manager: %w", err)
 	}
@@ -87,25 +105,7 @@ func NewServiceManager(ctx context.Context, servicesDef ServicesDefinition, env 
 	return &ServiceManager{
 		messagingManager: messagingManager,
 		storageManager:   storageManager,
-		bigqueryClient:   bqClient,
-		servicesDef:      servicesDef,
-		logger:           logger,
-	}, nil
-}
-
-// NewServiceManagerFromSubManagers creates a new central manager from pre-existing sub-managers and clients.
-func NewServiceManagerFromSubManagers(messagingManager *MessagingManager, storageManager *StorageManager, bqClient BQClient, servicesDef ServicesDefinition, logger zerolog.Logger) (*ServiceManager, error) {
-	if messagingManager == nil || storageManager == nil || bqClient == nil {
-		return nil, errors.New("all managers and clients must be non-nil")
-	}
-	if servicesDef == nil {
-		return nil, errors.New("services definition cannot be nil")
-	}
-
-	return &ServiceManager{
-		messagingManager: messagingManager,
-		storageManager:   storageManager,
-		bigqueryClient:   bqClient,
+		bigqueryManager:  bigQueryManager,
 		servicesDef:      servicesDef,
 		logger:           logger,
 	}, nil

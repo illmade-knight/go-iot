@@ -27,47 +27,6 @@ func ConsumedMessageTransformer(msg ConsumedMessage) (*GardenMonitorReadings, bo
 	return upstreamMsg.Payload, false, nil
 }
 
-// NewGardenMonitorDecoder creates the specific PayloadDecoder for the GardenMonitorReadings.
-//
-// This function is the bridge between the raw message bytes from the consumer and the
-// structured data that the bqstore library needs. It knows how to parse the outer
-// message structure and extract the inner payload that needs to be saved to BigQuery.
-//func NewGardenMonitorDecoder() func(payload []byte) (*GardenMonitorReadings, error) {
-//	return func(payload []byte) (*GardenMonitorReadings, error) {
-//		var upstreamMsg GardenMonitorMessage
-//		if err := json.Unmarshal(payload, &upstreamMsg); err != nil {
-//			return nil, fmt.Errorf("failed to unmarshal upstream GardenMonitorMessage: %w", err)
-//		}
-//
-//		// The service should only process messages that have a non-nil payload.
-//		// If the payload is nil, the decoder returns nil, and the generic
-//		// ProcessingService will automatically ack and skip the message.
-//		if upstreamMsg.Payload == nil {
-//			return nil, nil
-//		}
-//
-//		return upstreamMsg.Payload, nil
-//	}
-//}
-
-//// GardenMonitorDecoder is the specific implementation of PayloadDecoder for our message type.
-//// It decodes the raw Pub/Sub message payload into our target struct.
-//func GardenMonitorDecoder(payload []byte) (*GardenMonitorReadings, error) {
-//	var msg GardenMonitorMessage
-//	if err := json.Unmarshal(payload, &msg); err != nil {
-//		return nil, fmt.Errorf("failed to unmarshal outer message: %w", err)
-//	}
-//	// The message itself might be valid, but the payload within it could be null.
-//	if msg.Payload == nil {
-//		return nil, nil // Return nil to signal that this message should be acked and skipped.
-//	}
-//	// Add a timestamp if it's missing
-//	if msg.Payload.Timestamp.IsZero() {
-//		msg.Payload.Timestamp = time.Now().UTC()
-//	}
-//	return msg.Payload, nil
-//}
-
 // --- Garden Monitor Specific Types ---
 
 // GardenMonitorReadings is the data structure that will be inserted into BigQuery.

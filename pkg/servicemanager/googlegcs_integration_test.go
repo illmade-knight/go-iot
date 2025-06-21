@@ -55,7 +55,7 @@ resources:
           condition: { age_days: 7 }
 `, gcsTestProjectID, testBucketLocation, gcsTestProjectID, testBucketName)
 
-	configFilePath := servicemanager.CreateManagerTestYAMLFile(t, yamlContent)
+	configFilePath := CreateManagerTestYAMLFile(t, yamlContent)
 	cfg, err := servicemanager.LoadAndValidateConfig(configFilePath)
 	require.NoError(t, err)
 

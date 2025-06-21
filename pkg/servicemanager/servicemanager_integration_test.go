@@ -56,22 +56,27 @@ func TestServiceManager_Integration_Emulators(t *testing.T) {
 	require.NoError(t, err)
 	defer psEmulatorClient.Close()
 
+	dt := map[string]string{}
+	sm := map[string]interface{}{}
+	bqOptions, bqClose := emulators.SetupBigQueryEmulator(t, ctx, emulators.GetDefaultBigQueryConfig(projectID, dt, sm))
+	defer bqClose()
+
 	// Wrap clients in our adapters
 	gcsAdapter := servicemanager.NewGCSClientAdapter(gcsEmulatorClient)
 	psAdapter := servicemanager.NewGoogleMessagingClientAdapter(psEmulatorClient)
-	mockBQClient := &servicemanager.MockBQClient{} // BQ is not under test
+
+	bqGoogleClient := newEmulatorBQClient(ctx, t, projectID, bqOptions)
+
+	bqClientAdapter := servicemanager.NewBigQueryClientAdapter(bqGoogleClient)
+	require.NotNil(t, bqClientAdapter, "Manager BQ client adapter should not be nil")
 
 	// --- 2. Create ServiceManager using the clean constructor ---
 	servicesDef, err := servicemanager.NewInMemoryServicesDefinition(cfg)
 	require.NoError(t, err)
 	logger := zerolog.New(io.Discard)
 
-	// Create the MessagingManager that will be injected
-	psManager, err := servicemanager.NewMessagingManager(psAdapter, logger)
-	require.NoError(t, err)
-
 	// Create the main manager, injecting the sub-manager
-	manager, err := servicemanager.NewServiceManagerFromSubManagers(psManager, gcsAdapter, mockBQClient, servicesDef, logger)
+	manager, err := servicemanager.NewServiceManagerFromClients(psAdapter, gcsAdapter, bqClientAdapter, servicesDef, sm, logger)
 	require.NoError(t, err)
 
 	// --- 3. Run Setup and Verify ---

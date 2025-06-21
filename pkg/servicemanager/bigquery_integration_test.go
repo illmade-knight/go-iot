@@ -1,12 +1,14 @@
 //go:build integration
 
-package servicemanager
+package servicemanager_test
 
 import (
 	"context"
 	"fmt"
 	telemetry "github.com/illmade-knight/go-iot/gen/go/protos/telemetry"
-	"net/http"
+	"github.com/illmade-knight/go-iot/pkg/helpers/emulators"
+	"github.com/illmade-knight/go-iot/pkg/servicemanager"
+	"google.golang.org/api/option"
 	"os"
 	"path/filepath"
 	"strings"
@@ -18,15 +20,12 @@ import (
 	"github.com/rs/zerolog"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	"google.golang.org/api/option"
 	// "google.golang.org/grpc" // No longer needed if gRPC options removed from this specific helper
 	// "google.golang.org/grpc/credentials/insecure" // No longer needed if gRPC options removed from this specific helper
-
-	"github.com/testcontainers/testcontainers-go"
-	"github.com/testcontainers/testcontainers-go/wait"
 )
 
 const (
+	projectID = "sm-bq-test-project"
 	// BigQuery Emulator Test Config for Service Manager
 	testSMBQEmulatorImage       = "ghcr.io/goccy/bigquery-emulator:0.6.6"
 	testSMBQEmulatorGRPCPortStr = "9060"
@@ -48,88 +47,14 @@ const (
 // primarily using settings that work for REST-based metadata operations.
 // It relies on GOOGLE_CLOUD_PROJECT and BIGQUERY_API_ENDPOINT (the REST endpoint)
 // environment variables being set by the caller (using t.Setenv).
-func newEmulatorBQClient(ctx context.Context, t *testing.T, projectID string) *bigquery.Client {
+func newEmulatorBQClient(ctx context.Context, t *testing.T, projectID string, clientOpts []option.ClientOption) *bigquery.Client {
 	t.Helper()
-
-	emulatorRESTHost := os.Getenv("BIGQUERY_API_ENDPOINT") // Should be like "http://localhost:9050"
 
 	require.NotEmpty(t, projectID, "projectID must be set for newEmulatorBQClient")
-	require.NotEmpty(t, emulatorRESTHost, "BIGQUERY_API_ENDPOINT env var must be set for newEmulatorBQClient")
-
-	clientOpts := []option.ClientOption{
-		option.WithEndpoint(emulatorRESTHost), // Point to the REST endpoint
-		option.WithoutAuthentication(),
-		option.WithHTTPClient(&http.Client{}), // Use a plain http.Client to force HTTP
-		// NO gRPC specific options here.
-		// The client library should still be able to perform gRPC operations (like Put or Query)
-		// by respecting the BIGQUERY_EMULATOR_HOST env var for those specific calls if needed.
-	}
 
 	client, err := bigquery.NewClient(ctx, projectID, clientOpts...)
-	require.NoError(t, err, "newEmulatorBQClient: Failed to create BigQuery client. Project: %s, RESTHost: %s", projectID, emulatorRESTHost)
+	require.NoError(t, err, "newEmulatorBQClient: Failed to create BigQuery client. Project: %s", projectID)
 	return client
-}
-
-func setupBigQueryEmulatorForManagerTest(t *testing.T, ctx context.Context) (emulatorGRPCHost, emulatorRESTHost string, cleanupFunc func()) {
-	t.Helper()
-	req := testcontainers.ContainerRequest{
-		Image:        testSMBQEmulatorImage,
-		ExposedPorts: []string{testSMBQEmulatorGRPCPort, testSMBQEmulatorRestPort},
-		Cmd: []string{
-			"--project=" + testSMBQProjectID,
-			"--port=" + testSMBQEmulatorRestPortStr,
-			"--grpc-port=" + testSMBQEmulatorGRPCPortStr,
-			"--log-level=debug",
-		},
-		WaitingFor: wait.ForAll(
-			wait.ForListeningPort(testSMBQEmulatorGRPCPort).WithStartupTimeout(60*time.Second),
-			wait.ForListeningPort(testSMBQEmulatorRestPort).WithStartupTimeout(60*time.Second),
-		),
-	}
-	container, err := testcontainers.GenericContainer(ctx, testcontainers.GenericContainerRequest{ContainerRequest: req, Started: true})
-	require.NoError(t, err, "Failed to start BigQuery emulator container for manager test")
-
-	host, err := container.Host(ctx)
-	require.NoError(t, err)
-
-	grpcMappedPort, err := container.MappedPort(ctx, testSMBQEmulatorGRPCPort)
-	require.NoError(t, err)
-	emulatorGRPCHost = fmt.Sprintf("%s:%s", host, grpcMappedPort.Port())
-	t.Logf("BigQuery emulator container started, gRPC on: %s", emulatorGRPCHost)
-
-	restMappedPort, err := container.MappedPort(ctx, testSMBQEmulatorRestPort)
-	require.NoError(t, err)
-	emulatorRESTHost = fmt.Sprintf("http://%s:%s", host, restMappedPort.Port())
-	t.Logf("BigQuery emulator container started, REST on: %s", emulatorRESTHost)
-
-	// Set environment variables *before* creating any BigQuery clients
-	t.Setenv("GOOGLE_CLOUD_PROJECT", testSMBQProjectID)
-	t.Setenv("BIGQUERY_EMULATOR_HOST", emulatorGRPCHost) // For gRPC based API calls by client library
-	t.Setenv("BIGQUERY_API_ENDPOINT", emulatorRESTHost)  // For REST based API calls by client library
-
-	// Use the helper to create the admin client
-	adminBqClient := newEmulatorBQClient(ctx, t, testSMBQProjectID)
-	require.NotNil(t, adminBqClient, "Admin BQ client should not be nil")
-	defer adminBqClient.Close()
-
-	dataset := adminBqClient.Dataset(testSMBQAdminDatasetID)
-	err = dataset.Create(ctx, &bigquery.DatasetMetadata{Name: testSMBQAdminDatasetID})
-	if err != nil {
-		if strings.Contains(err.Error(), "http: server gave HTTP response to HTTPS client") {
-			t.Logf("CRITICAL: dataset.Create failed with HTTP/HTTPS mismatch. BIGQUERY_API_ENDPOINT was: %s", emulatorRESTHost)
-		}
-		if !strings.Contains(err.Error(), "Already Exists") {
-			require.NoError(t, err, "Failed to create dataset '%s' on BQ emulator.", testSMBQAdminDatasetID)
-		} else {
-			t.Logf("BigQuery dataset '%s' already exists on emulator.", testSMBQAdminDatasetID)
-		}
-	} else {
-		t.Logf("Created BigQuery dataset '%s' on emulator", testSMBQDatasetID)
-	}
-
-	// Table creation is now handled by the manager's Setup call in the test itself.
-
-	return emulatorGRPCHost, emulatorRESTHost, func() { require.NoError(t, container.Terminate(ctx)) }
 }
 
 // CreateManagerTestYAMLFile creates a temporary YAML file with the given content
@@ -171,11 +96,14 @@ func CreateManagerTestYAMLFile(t *testing.T, content string) string {
 }
 
 func TestBigQueryManager_Integration_SetupAndTeardown(t *testing.T) {
+
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
 	defer cancel()
 
 	// SetupBigQueryEmulatorForManagerTest now sets the necessary env vars
-	_, _, bqEmulatorCleanupFunc := setupBigQueryEmulatorForManagerTest(t, ctx)
+	dm := map[string]string{}
+	sm := map[string]interface{}{}
+	clientOptions, bqEmulatorCleanupFunc := emulators.SetupBigQueryEmulator(t, ctx, emulators.GetDefaultBigQueryConfig(projectID, dm, sm))
 	defer bqEmulatorCleanupFunc()
 
 	// Define a sample configuration YAML content
@@ -220,7 +148,7 @@ resources:
 
 	configFilePath := CreateManagerTestYAMLFile(t, yamlContent) // Assumes this helper is available in the package
 
-	cfg, err := LoadAndValidateConfig(configFilePath)
+	cfg, err := servicemanager.LoadAndValidateConfig(configFilePath)
 	require.NoError(t, err, "Failed to load and validate test config")
 	require.NotNil(t, cfg, "Config should not be nil")
 
@@ -228,14 +156,14 @@ resources:
 
 	// Create the BQ client for the manager using the general helper.
 	// GOOGLE_CLOUD_PROJECT, BIGQUERY_EMULATOR_HOST, BIGQUERY_API_ENDPOINT are set by setupBigQueryEmulatorForManagerTest
-	managerConcreteClient := newEmulatorBQClient(ctx, t, testSMBQProjectID)
+	managerConcreteClient := newEmulatorBQClient(ctx, t, projectID, clientOptions)
 	require.NotNil(t, managerConcreteClient, "Manager BQ client should not be nil")
 	defer managerConcreteClient.Close()
 
-	managerBQClientAdapter := NewBigQueryClientAdapter(managerConcreteClient)
+	managerBQClientAdapter := servicemanager.NewBigQueryClientAdapter(managerConcreteClient)
 	require.NotNil(t, managerBQClientAdapter, "Manager BQ client adapter should not be nil")
 
-	manager, err := NewBigQueryManager(managerBQClientAdapter, logger, nil)
+	manager, err := servicemanager.NewBigQueryManager(managerBQClientAdapter, logger, nil)
 	require.NoError(t, err)
 
 	// --- Test Setup ---
@@ -244,7 +172,7 @@ resources:
 		require.NoError(t, err, "BigQueryManager.Setup failed")
 
 		// Verification client - create a new one using the same helper
-		verifyClient := newEmulatorBQClient(ctx, t, testSMBQProjectID)
+		verifyClient := newEmulatorBQClient(ctx, t, testSMBQProjectID, clientOptions)
 		defer verifyClient.Close()
 
 		// Verify dataset1
@@ -307,7 +235,7 @@ resources:
 
 	// --- Test Teardown ---
 	t.Run("TeardownBigQueryResources", func(t *testing.T) {
-		cfg.Environments["integration_test_bq_sm"] = EnvironmentSpec{
+		cfg.Environments["integration_test_bq_sm"] = servicemanager.EnvironmentSpec{
 			ProjectID:          testSMBQProjectID,
 			TeardownProtection: false,
 		}
@@ -315,7 +243,7 @@ resources:
 		err = manager.Teardown(ctx, cfg, "integration_test_bq_sm")
 		require.NoError(t, err, "BigQueryManager.Teardown failed")
 
-		verifyClient := newEmulatorBQClient(ctx, t, testSMBQProjectID)
+		verifyClient := newEmulatorBQClient(ctx, t, testSMBQProjectID, clientOptions)
 		defer verifyClient.Close()
 
 		table := verifyClient.Dataset(testSMBQDatasetID).Table(testSMBQTableID)
