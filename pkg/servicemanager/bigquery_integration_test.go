@@ -45,8 +45,6 @@ const (
 
 // newEmulatorBQClient creates a BigQuery client configured for the emulator,
 // primarily using settings that work for REST-based metadata operations.
-// It relies on GOOGLE_CLOUD_PROJECT and BIGQUERY_API_ENDPOINT (the REST endpoint)
-// environment variables being set by the caller (using t.Setenv).
 func newEmulatorBQClient(ctx context.Context, t *testing.T, projectID string, clientOpts []option.ClientOption) *bigquery.Client {
 	t.Helper()
 
@@ -224,8 +222,8 @@ resources:
 			actualSchemaFieldNames[fieldSchema.Name] = true
 			actualFieldNamesForLog = append(actualFieldNamesForLog, fieldSchema.Name)
 		}
-		t.Logf("Actual table schema fields from BQ metadata: %v", actualFieldNamesForLog)
-		t.Logf("Expected schema fields (snake_case from Saver): %v", mapsKeys(expectedSchemaMap))
+		//t.Logf("Actual table schema fields from BQ metadata: %v", actualFieldNamesForLog)
+		//t.Logf("Expected schema fields (snake_case from Saver): %v", mapsKeys(expectedSchemaMap))
 
 		for expectedName := range expectedSchemaMap {
 			assert.True(t, actualSchemaFieldNames[expectedName], "Expected snake_case field '%s' (from Saver) not found in table schema. Actual fields: %v", expectedName, actualFieldNamesForLog)

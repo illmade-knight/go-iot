@@ -177,13 +177,11 @@ func (sm *ServiceManager) TeardownAll(ctx context.Context, cfg *TopLevelConfig, 
 
 // setupBigQueryResources and teardownBigQueryResources are placeholders for future refactoring.
 func (sm *ServiceManager) setupBigQueryResources(ctx context.Context, cfg *TopLevelConfig, environment string, logger zerolog.Logger) error {
-	// This would delegate to a BQManager in the future.
-	return nil
+	return sm.bigqueryManager.Setup(ctx, cfg, environment)
 }
 
 func (sm *ServiceManager) teardownBigQueryResources(ctx context.Context, cfg *TopLevelConfig, environment string, logger zerolog.Logger) error {
-	// This would delegate to a BQManager in the future.
-	return nil
+	return sm.bigqueryManager.Teardown(ctx, cfg, environment)
 }
 
 // The Dataflow and filter methods remain the same.
