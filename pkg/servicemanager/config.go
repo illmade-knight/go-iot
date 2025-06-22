@@ -40,8 +40,8 @@ func LoadAndValidateConfig(configPath string) (*TopLevelConfig, error) {
 
 	// You can add a check if at least one GCS bucket is defined if it's critical
 	if len(config.Resources.GCSBuckets) == 0 &&
-		len(config.Resources.PubSubTopics) == 0 &&
-		len(config.Resources.PubSubSubscriptions) == 0 &&
+		len(config.Resources.MessagingTopics) == 0 &&
+		len(config.Resources.MessagingSubscriptions) == 0 &&
 		len(config.Resources.BigQueryDatasets) == 0 &&
 		len(config.Resources.BigQueryTables) == 0 {
 		return nil, fmt.Errorf("validation error: no resources (GCS buckets, Pub/Sub, BigQuery) defined in resources")

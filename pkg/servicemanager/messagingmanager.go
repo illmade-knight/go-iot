@@ -47,11 +47,11 @@ func (m *MessagingManager) Setup(ctx context.Context, cfg *TopLevelConfig, envir
 	}
 	m.logger.Info().Str("project_id", projectID).Str("environment", environment).Msg("Starting Pub/Sub setup")
 
-	if err := m.setupTopics(ctx, cfg.Resources.PubSubTopics); err != nil {
+	if err := m.setupTopics(ctx, cfg.Resources.MessagingTopics); err != nil {
 		return err
 	}
 
-	if err := m.setupSubscriptions(ctx, cfg.Resources.PubSubSubscriptions); err != nil {
+	if err := m.setupSubscriptions(ctx, cfg.Resources.MessagingSubscriptions); err != nil {
 		return err
 	}
 
@@ -152,10 +152,10 @@ func (m *MessagingManager) Teardown(ctx context.Context, cfg *TopLevelConfig, en
 		return fmt.Errorf("teardown protection enabled for environment: %s", environment)
 	}
 
-	if err := m.teardownSubscriptions(ctx, cfg.Resources.PubSubSubscriptions); err != nil {
+	if err := m.teardownSubscriptions(ctx, cfg.Resources.MessagingSubscriptions); err != nil {
 		return err
 	}
-	if err := m.teardownTopics(ctx, cfg.Resources.PubSubTopics); err != nil {
+	if err := m.teardownTopics(ctx, cfg.Resources.MessagingTopics); err != nil {
 		return err
 	}
 

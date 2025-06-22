@@ -43,8 +43,8 @@ resources:
 			checkConfig: func(t *testing.T, cfg *TopLevelConfig) {
 				require.NotNil(t, cfg)
 				assert.Equal(t, "default-project", cfg.DefaultProjectID)
-				assert.Len(t, cfg.Resources.PubSubTopics, 1)
-				assert.Equal(t, "topic-a", cfg.Resources.PubSubTopics[0].Name)
+				assert.Len(t, cfg.Resources.MessagingTopics, 1)
+				assert.Equal(t, "topic-a", cfg.Resources.MessagingTopics[0].Name)
 			},
 		},
 		{
@@ -60,7 +60,7 @@ resources:
 				require.NotNil(t, cfg)
 				assert.Len(t, cfg.Resources.GCSBuckets, 1)
 				assert.Equal(t, "my-gcs-bucket-only", cfg.Resources.GCSBuckets[0].Name)
-				assert.Empty(t, cfg.Resources.PubSubTopics, "Should have no pubsub topics")
+				assert.Empty(t, cfg.Resources.MessagingTopics, "Should have no pubsub topics")
 			},
 		},
 		{
@@ -127,8 +127,8 @@ resources:
 				assert.Equal(t, "my-default-gcp-project", cfg.DefaultProjectID)
 				require.NotNil(t, cfg.Environments["test"])
 				assert.Equal(t, "my-test-gcp-project", cfg.Environments["test"].ProjectID)
-				require.Len(t, cfg.Resources.PubSubTopics, 1)
-				assert.Equal(t, "ingested-device-data", cfg.Resources.PubSubTopics[0].Name)
+				require.Len(t, cfg.Resources.MessagingTopics, 1)
+				assert.Equal(t, "ingested-device-data", cfg.Resources.MessagingTopics[0].Name)
 				require.Len(t, cfg.Resources.GCSBuckets, 1)
 				assert.Equal(t, "iot-device-archive-bucket", cfg.Resources.GCSBuckets[0].Name)
 			},

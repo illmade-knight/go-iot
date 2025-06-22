@@ -72,11 +72,11 @@ type LifecyclePolicy struct {
 
 // ResourcesSpec is a container for all the cloud resources defined in the system.
 type ResourcesSpec struct {
-	PubSubTopics        []MessagingTopicConfig        `yaml:"pubsub_topics"`
-	PubSubSubscriptions []MessagingSubscriptionConfig `yaml:"pubsub_subscriptions"`
-	BigQueryDatasets    []BigQueryDataset             `yaml:"bigquery_datasets"`
-	BigQueryTables      []BigQueryTable               `yaml:"bigquery_tables"`
-	GCSBuckets          []GCSBucket                   `yaml:"gcs_buckets"`
+	MessagingTopics        []MessagingTopicConfig        `yaml:"messaging_topics"`
+	MessagingSubscriptions []MessagingSubscriptionConfig `yaml:"messaging_subscriptions"`
+	BigQueryDatasets       []BigQueryDataset             `yaml:"bigquery_datasets"`
+	BigQueryTables         []BigQueryTable               `yaml:"bigquery_tables"`
+	GCSBuckets             []GCSBucket                   `yaml:"gcs_buckets"`
 }
 
 // MessagingTopicConfig defines the configuration for a Pub/Sub topic.

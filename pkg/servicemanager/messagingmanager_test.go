@@ -106,11 +106,11 @@ func getTestMessagingConfig() *servicemanager.TopLevelConfig {
 			"prod": {ProjectID: "prod-project", TeardownProtection: true},
 		},
 		Resources: servicemanager.ResourcesSpec{
-			PubSubTopics: []servicemanager.MessagingTopicConfig{
+			MessagingTopics: []servicemanager.MessagingTopicConfig{
 				{Name: "test-topic-1"},
 				{Name: "test-topic-2", Labels: map[string]string{"env": "test"}},
 			},
-			PubSubSubscriptions: []servicemanager.MessagingSubscriptionConfig{
+			MessagingSubscriptions: []servicemanager.MessagingSubscriptionConfig{
 				{Name: "test-sub-1", Topic: "test-topic-1", AckDeadlineSeconds: 30, MessageRetention: servicemanager.Duration(10 * time.Minute)},
 			},
 		},
@@ -138,13 +138,13 @@ func TestPubSubManager_Setup_CreateNewResources(t *testing.T) {
 	mockTopic2 := new(MockMessagingTopic)
 	mockClient.On("Topic", "test-topic-2").Return(mockTopic2)
 	mockTopic2.On("Exists", ctx).Return(false, nil)
-	mockClient.On("CreateTopicWithConfig", ctx, config.Resources.PubSubTopics[1]).Return(mockTopic2, nil)
+	mockClient.On("CreateTopicWithConfig", ctx, config.Resources.MessagingTopics[1]).Return(mockTopic2, nil)
 	mockTopic2.On("ID").Return("test-topic-2")
 
 	mockSub1 := new(MockMessagingSubscription)
 	mockClient.On("Subscription", "test-sub-1").Return(mockSub1)
 	mockSub1.On("Exists", ctx).Return(false, nil)
-	mockClient.On("CreateSubscription", ctx, config.Resources.PubSubSubscriptions[0]).Return(mockSub1, nil)
+	mockClient.On("CreateSubscription", ctx, config.Resources.MessagingSubscriptions[0]).Return(mockSub1, nil)
 	mockSub1.On("ID").Return("test-sub-1")
 
 	// Act

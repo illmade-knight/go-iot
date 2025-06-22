@@ -68,7 +68,7 @@ func GetConfigurationForService(def ServicesDefinition, serviceName, environment
 	}
 
 	// Populate PublishesToTopics
-	for _, topicCfg := range fullConfig.Resources.PubSubTopics {
+	for _, topicCfg := range fullConfig.Resources.MessagingTopics {
 		if topicCfg.ProducerService == serviceName {
 			response.PublishesToTopics = append(response.PublishesToTopics, ServiceResourceInfo{
 				Name:   fmt.Sprintf("projects/%s/topics/%s", targetProjectID, topicCfg.Name),
@@ -78,7 +78,7 @@ func GetConfigurationForService(def ServicesDefinition, serviceName, environment
 	}
 
 	// Populate ConsumesFromSubscriptions
-	for _, subCfg := range fullConfig.Resources.PubSubSubscriptions {
+	for _, subCfg := range fullConfig.Resources.MessagingSubscriptions {
 		if subCfg.ConsumerService == serviceName {
 			fullTopicName := fmt.Sprintf("projects/%s/topics/%s", targetProjectID, subCfg.Topic)
 			response.ConsumesFromSubscriptions = append(response.ConsumesFromSubscriptions, ServiceSubscriptionInfo{

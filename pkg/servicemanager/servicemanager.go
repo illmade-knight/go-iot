@@ -134,10 +134,10 @@ func (sm *ServiceManager) SetupAll(ctx context.Context, cfg *TopLevelConfig, env
 	}
 
 	provResources := &ProvisionedResources{}
-	for _, topic := range cfg.Resources.PubSubTopics {
+	for _, topic := range cfg.Resources.MessagingTopics {
 		provResources.PubSubTopics = append(provResources.PubSubTopics, ProvisionedMessagingTopic{Name: topic.Name})
 	}
-	for _, sub := range cfg.Resources.PubSubSubscriptions {
+	for _, sub := range cfg.Resources.MessagingSubscriptions {
 		provResources.PubSubSubscriptions = append(provResources.PubSubSubscriptions, ProvisionedMessagingSubscription{Name: sub.Name, Topic: sub.Topic})
 	}
 	for _, bucket := range cfg.Resources.GCSBuckets {
@@ -247,14 +247,14 @@ func (sm *ServiceManager) filterConfigForServices(fullConfig *TopLevelConfig, se
 		Resources:        ResourcesSpec{},
 	}
 
-	for _, topic := range fullConfig.Resources.PubSubTopics {
+	for _, topic := range fullConfig.Resources.MessagingTopics {
 		if _, ok := serviceSet[topic.ProducerService]; ok {
-			dataflowConfig.Resources.PubSubTopics = append(dataflowConfig.Resources.PubSubTopics, topic)
+			dataflowConfig.Resources.MessagingTopics = append(dataflowConfig.Resources.MessagingTopics, topic)
 		}
 	}
-	for _, sub := range fullConfig.Resources.PubSubSubscriptions {
+	for _, sub := range fullConfig.Resources.MessagingSubscriptions {
 		if _, ok := serviceSet[sub.ConsumerService]; ok {
-			dataflowConfig.Resources.PubSubSubscriptions = append(dataflowConfig.Resources.PubSubSubscriptions, sub)
+			dataflowConfig.Resources.MessagingSubscriptions = append(dataflowConfig.Resources.MessagingSubscriptions, sub)
 		}
 	}
 	for _, bucket := range fullConfig.Resources.GCSBuckets {

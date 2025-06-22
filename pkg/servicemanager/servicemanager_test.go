@@ -57,7 +57,7 @@ func getTestConfig() *servicemanager.TopLevelConfig {
 			"test": {ProjectID: "test-project"},
 		},
 		Resources: servicemanager.ResourcesSpec{
-			PubSubTopics: []servicemanager.MessagingTopicConfig{
+			MessagingTopics: []servicemanager.MessagingTopicConfig{
 				{Name: "topic1", ProducerService: "service-a"},
 			},
 			GCSBuckets: []servicemanager.GCSBucket{
