@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/illmade-knight/go-iot/pkg/types"
+	"github.com/rs/zerolog/log"
 )
 
 // ====================================================================================
@@ -30,6 +31,9 @@ type MockMessageConsumer struct {
 
 // NewMockMessageConsumer creates a new mock consumer with a buffered channel.
 func NewMockMessageConsumer(bufferSize int) *MockMessageConsumer {
+	if bufferSize < 0 {
+		bufferSize = 0
+	}
 	return &MockMessageConsumer{
 		msgChan:  make(chan types.ConsumedMessage, bufferSize),
 		doneChan: make(chan struct{}),
@@ -51,19 +55,29 @@ func (m *MockMessageConsumer) Start(ctx context.Context) error {
 	}
 	go func() {
 		<-ctx.Done()
-		m.Stop()
+		_ = m.Stop()
 	}()
 	return nil
 }
 
 // Stop gracefully closes the message and done channels.
+// FIX: This now correctly simulates a real consumer by draining its internal
+// buffer and Nacking any outstanding messages upon shutdown.
 func (m *MockMessageConsumer) Stop() error {
 	m.stopOnce.Do(func() {
 		m.startMu.Lock()
-		defer m.startMu.Unlock()
 		m.stopCount++
-		close(m.msgChan)
+		m.startMu.Unlock()
+
 		close(m.doneChan)
+		close(m.msgChan)
+
+		for msg := range m.msgChan {
+			log.Warn().Str("msg_id", msg.ID).Msg("MockConsumer draining and Nacking message on shutdown.")
+			if msg.Nack != nil {
+				msg.Nack()
+			}
+		}
 	})
 	return nil
 }
@@ -75,6 +89,11 @@ func (m *MockMessageConsumer) Done() <-chan struct{} {
 
 // Push is a test helper to inject a message into the mock consumer's channel.
 func (m *MockMessageConsumer) Push(msg types.ConsumedMessage) {
+	defer func() {
+		if r := recover(); r != nil {
+			log.Warn().Msg("Recovered from panic trying to push to closed consumer channel.")
+		}
+	}()
 	m.msgChan <- msg
 }
 
@@ -85,22 +104,41 @@ func (m *MockMessageConsumer) SetStartError(err error) {
 	m.startErr = err
 }
 
+// GetStartCount returns the number of times Start() was called.
+func (m *MockMessageConsumer) GetStartCount() int {
+	m.startMu.Lock()
+	defer m.startMu.Unlock()
+	return m.startCount
+}
+
+// GetStopCount returns the number of times Stop() was called.
+func (m *MockMessageConsumer) GetStopCount() int {
+	m.startMu.Lock()
+	defer m.startMu.Unlock()
+	return m.stopCount
+}
+
 // --- MockMessageProcessor ---
 
 // MockMessageProcessor is a mock implementation of the MessageProcessor interface.
 type MockMessageProcessor[T any] struct {
-	InputChan      chan *types.BatchedMessage[T]
-	Received       []*types.BatchedMessage[T]
-	mu             sync.Mutex
-	wg             sync.WaitGroup
-	startCount     int
-	stopCount      int
-	processDelay   time.Duration // To simulate a slow processor
-	processingHook func(msg *types.BatchedMessage[T])
+	InputChan              chan *types.BatchedMessage[T]
+	Received               []*types.BatchedMessage[T]
+	mu                     sync.Mutex
+	wg                     sync.WaitGroup
+	startCount             int
+	stopCount              int
+	processDelay           time.Duration
+	processingHook         func(msg *types.BatchedMessage[T])
+	ackOnProcess           bool
+	messageProcessedSignal chan struct{}
 }
 
 // NewMockMessageProcessor creates a new mock processor.
 func NewMockMessageProcessor[T any](bufferSize int) *MockMessageProcessor[T] {
+	if bufferSize < 0 {
+		bufferSize = 0
+	}
 	return &MockMessageProcessor[T]{
 		InputChan: make(chan *types.BatchedMessage[T], bufferSize),
 		Received:  []*types.BatchedMessage[T]{},
@@ -127,12 +165,25 @@ func (m *MockMessageProcessor[T]) Start() {
 			}
 			m.mu.Lock()
 			m.Received = append(m.Received, msg)
-			if m.processingHook != nil {
-				// The hook must be called inside the lock to prevent race conditions
-				// if it modifies shared state with the test goroutine.
-				m.processingHook(msg)
+			if m.ackOnProcess {
+				msg.OriginalMessage.Ack()
 			}
+			hook := m.processingHook
 			m.mu.Unlock()
+
+			if hook != nil {
+				hook(msg)
+			}
+
+			m.mu.Lock()
+			signalChan := m.messageProcessedSignal
+			m.mu.Unlock()
+			if signalChan != nil {
+				select {
+				case signalChan <- struct{}{}:
+				default:
+				}
+			}
 		}
 	}()
 }
@@ -143,7 +194,7 @@ func (m *MockMessageProcessor[T]) Stop() {
 	m.stopCount++
 	m.mu.Unlock()
 	close(m.InputChan)
-	m.wg.Wait() // Wait for the processing goroutine to finish.
+	m.wg.Wait()
 }
 
 // GetReceived returns a copy of the messages received by the processor.
@@ -167,4 +218,51 @@ func (m *MockMessageProcessor[T]) SetProcessingHook(hook func(msg *types.Batched
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.processingHook = hook
+}
+
+// SetAckOnProcess configures the mock processor to call Ack() on the original message.
+func (m *MockMessageProcessor[T]) SetAckOnProcess(b bool) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.ackOnProcess = b
+}
+
+// SetMessageProcessedSignal sets a channel that will be signaled each time a message is processed.
+func (m *MockMessageProcessor[T]) SetMessageProcessedSignal(ch chan struct{}) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.messageProcessedSignal = ch
+}
+
+// --- messageState ---
+// messageState tracks the Ack/Nack status for individual messages in table tests.
+type messageState struct {
+	ID         string
+	mu         sync.Mutex
+	ackCalled  bool
+	nackCalled bool
+}
+
+func (ms *messageState) Ack() {
+	ms.mu.Lock()
+	defer ms.mu.Unlock()
+	ms.ackCalled = true
+}
+
+func (ms *messageState) Nack() {
+	ms.mu.Lock()
+	defer ms.mu.Unlock()
+	ms.nackCalled = true
+}
+
+func (ms *messageState) IsAcked() bool {
+	ms.mu.Lock()
+	defer ms.mu.Unlock()
+	return ms.ackCalled
+}
+
+func (ms *messageState) IsNacked() bool {
+	ms.mu.Lock()
+	defer ms.mu.Unlock()
+	return ms.nackCalled
 }

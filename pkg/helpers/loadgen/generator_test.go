@@ -132,22 +132,31 @@ func TestLoadGenerator_Run(t *testing.T) {
 		duration := 1 * time.Second          // Long duration
 		cancelAfter := 50 * time.Millisecond // Short cancellation time
 
-		// We use a WaitGroup to ensure the publish goroutine has started
+		// We use a WaitGroup to ensure the publish goroutine has started.
+		// A sync.Once is used to ensure we only call Done() once, even if Publish is called multiple times.
 		var wg sync.WaitGroup
+		var once sync.Once
 		wg.Add(1)
 
 		mockClient.On("Connect").Return(nil).Once()
 		mockClient.On("Disconnect").Return().Once()
-		// Expect Publish to be called, but it should stop after context is cancelled
+		// Expect Publish to be called, but it should stop after context is cancelled.
+		// We call wg.Done() only on the first call to Publish.
 		mockClient.On("Publish", mock.Anything, devices[0]).Return(nil).Run(func(args mock.Arguments) {
-			wg.Done() // Signal that at least one publish attempt was made
+			once.Do(func() {
+				wg.Done() // Signal that at least one publish attempt was made
+			})
 		}).Maybe()
 
 		// Act
 		lg := loadgen.NewLoadGenerator(mockClient, devices, logger)
 		ctx, cancel := context.WithCancel(context.Background())
 
+		// We don't need to wait for the goroutine to finish, just that it ran.
+		// wg.Wait() in the goroutine was causing a deadlock.
+		// The test now correctly waits for the Run method to complete.
 		go func() {
+			// This goroutine now correctly cancels the context for the Run method
 			time.Sleep(cancelAfter)
 			cancel()
 		}()
