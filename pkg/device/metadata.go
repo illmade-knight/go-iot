@@ -1,4 +1,4 @@
-package connectors
+package device
 
 import "errors"
 

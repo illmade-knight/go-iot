@@ -5,7 +5,7 @@ import (
 	"context"
 	"fmt"
 
-	"github.com/illmade-knight/go-iot/pkg/consumers"
+	"github.com/illmade-knight/go-iot/pkg/messagepipeline"
 	"github.com/rs/zerolog"
 )
 
@@ -19,19 +19,19 @@ import (
 // BigQuery processing pipeline.
 //
 // REFACTORED: This function now accepts a `MessageTransformer` instead of the legacy
-// `PayloadDecoder`. This aligns it with the updated consumers.ProcessingService,
+// `PayloadDecoder`. This aligns it with the updated messagepipeline.ProcessingService,
 // allowing transformation logic to access the full `ConsumedMessage` and its metadata.
 func NewBigQueryService[T any](
 	numWorkers int,
-	consumer consumers.MessageConsumer,
+	consumer messagepipeline.MessageConsumer,
 	batchInserter *BatchInserter[T], // The bqstore-specific processor
-	transformer consumers.MessageTransformer[T],
+	transformer messagepipeline.MessageTransformer[T],
 	logger zerolog.Logger,
-) (*consumers.ProcessingService[T], error) {
+) (*messagepipeline.ProcessingService[T], error) {
 
 	// The bqstore.BatchInserter already satisfies the consumers.MessageProcessor interface,
 	// so we can pass it directly to the generic service constructor.
-	genericService, err := consumers.NewProcessingService[T](
+	genericService, err := messagepipeline.NewProcessingService[T](
 		numWorkers,
 		consumer,
 		batchInserter, // Pass the BatchInserter as the MessageProcessor
@@ -48,7 +48,7 @@ func NewBigQueryService[T any](
 // NewBigQueryBatchProcessor is a high-level convenience constructor that creates and
 // wires together a BigQueryInserter and a BatchInserter. This simplifies service
 // initialization by providing a single entry point for creating a complete BigQuery
-// batch processing pipeline that satisfies the consumers.MessageProcessor interface.
+// batch processing pipeline that satisfies the messagepipeline.MessageProcessor interface.
 func NewBigQueryBatchProcessor[T any](
 	ctx context.Context,
 	client *bigquery.Client,

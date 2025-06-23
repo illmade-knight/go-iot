@@ -3,7 +3,7 @@ package icestore
 import (
 	"fmt"
 
-	"github.com/illmade-knight/go-iot/pkg/consumers"
+	"github.com/illmade-knight/go-iot/pkg/messagepipeline"
 	"github.com/rs/zerolog"
 )
 
@@ -19,15 +19,15 @@ import (
 // GCS archival pipeline. It is now specific to processing ArchivalData.
 func NewIceStorageService(
 	numWorkers int,
-	consumer consumers.MessageConsumer,
+	consumer messagepipeline.MessageConsumer,
 	batcher *Batcher, // Non-generic
-	transformer consumers.MessageTransformer[ArchivalData], // Explicit type
+	transformer messagepipeline.MessageTransformer[ArchivalData], // Explicit type
 	logger zerolog.Logger,
-) (*consumers.ProcessingService[ArchivalData], error) {
+) (*messagepipeline.ProcessingService[ArchivalData], error) {
 
 	// The consumers.ProcessingService is still generic, so we specify that it
 	// will be handling the ArchivalData type.
-	processingService, err := consumers.NewProcessingService[ArchivalData](
+	processingService, err := messagepipeline.NewProcessingService[ArchivalData](
 		numWorkers,
 		consumer,
 		batcher, // Pass the non-generic Batcher
@@ -43,7 +43,7 @@ func NewIceStorageService(
 
 // NewGCSBatchProcessor is a high-level convenience constructor that creates a
 // complete GCS archival pipeline component (uploader + batcher) that satisfies the
-// consumers.MessageProcessor interface.
+// messagepipeline.MessageProcessor interface.
 func NewGCSBatchProcessor(
 	gcsClient GCSClient,
 	batchCfg *BatcherConfig,

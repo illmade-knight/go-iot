@@ -17,8 +17,8 @@ import (
 
 	"cloud.google.com/go/pubsub"
 	"cloud.google.com/go/storage"
-	"github.com/illmade-knight/go-iot/pkg/consumers"
 	"github.com/illmade-knight/go-iot/pkg/icestore"
+	"github.com/illmade-knight/go-iot/pkg/messagepipeline"
 	"github.com/rs/zerolog"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -143,10 +143,10 @@ func TestIceStorageService_Integration(t *testing.T) {
 			require.NoError(t, clearBucket(testCtx, gcsClient.Bucket(testBucketName)), "Failed to clear GCS bucket")
 
 			// --- Initialize Service Components ---
-			consumerCfg := &consumers.GooglePubsubConsumerConfig{
+			consumerCfg := &messagepipeline.GooglePubsubConsumerConfig{
 				ProjectID: testProjectID, SubscriptionID: testSubscriptionID, MaxOutstandingMessages: 10, NumGoroutines: 2,
 			}
-			consumer, err := consumers.NewGooglePubsubConsumer(testCtx, consumerCfg, pubsubConnection.ClientOptions, logger)
+			consumer, err := messagepipeline.NewGooglePubsubConsumer(testCtx, consumerCfg, pubsubConnection.ClientOptions, logger)
 			require.NoError(t, err)
 
 			batcher, err := icestore.NewGCSBatchProcessor(

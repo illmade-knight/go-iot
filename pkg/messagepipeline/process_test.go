@@ -1,4 +1,4 @@
-package consumers
+package messagepipeline
 
 import (
 	"errors"

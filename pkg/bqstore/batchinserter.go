@@ -30,7 +30,7 @@ type BatchInserterConfig struct {
 }
 
 // BatchInserter manages batching and insertion for items of type T.
-// It now implicitly implements the consumers.MessageProcessor[T] interface.
+// It now implicitly implements the messagepipeline.MessageProcessor[T] interface.
 type BatchInserter[T any] struct {
 	config       *BatchInserterConfig
 	inserter     DataBatchInserter[T]

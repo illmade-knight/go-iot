@@ -1,4 +1,4 @@
-package consumers
+package messagepipeline
 
 import (
 	"cloud.google.com/go/pubsub"
@@ -58,7 +58,7 @@ func NewGooglePubsubConsumer(ctx context.Context, cfg *GooglePubsubConsumerConfi
 	if opts == nil {
 		opts = []option.ClientOption{}
 	}
-	
+
 	client, err := pubsub.NewClient(ctx, cfg.ProjectID, opts...)
 	if err != nil {
 		return nil, fmt.Errorf("pubsub.NewClient for subscription %s: %w", cfg.SubscriptionID, err)

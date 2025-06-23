@@ -19,7 +19,7 @@ import (
 	"cloud.google.com/go/bigquery"
 	"cloud.google.com/go/pubsub"
 	"github.com/illmade-knight/go-iot/pkg/bqstore"
-	"github.com/illmade-knight/go-iot/pkg/consumers" // Using shared consumers package
+	"github.com/illmade-knight/go-iot/pkg/messagepipeline" // Using shared consumers package
 	"github.com/rs/zerolog"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -69,7 +69,7 @@ func TestBigQueryService_Integration_FullFlow(t *testing.T) {
 	writer := io.MultiWriter(zerolog.ConsoleWriter{Out: os.Stdout, TimeFormat: time.RFC3339}, &logBuf)
 	logger := zerolog.New(writer).Level(zerolog.DebugLevel).With().Timestamp().Logger()
 
-	consumerCfg := &consumers.GooglePubsubConsumerConfig{
+	consumerCfg := &messagepipeline.GooglePubsubConsumerConfig{
 		ProjectID:      testProjectID,
 		SubscriptionID: testInputSubscriptionID,
 	}
@@ -85,7 +85,7 @@ func TestBigQueryService_Integration_FullFlow(t *testing.T) {
 
 	// --- Initialize Components with new, refactored structure ---
 	//opts := []option.ClientOption{option.WithEndpoint("localhost:58752"), option.WithoutAuthentication()}
-	consumer, err := consumers.NewGooglePubsubConsumer(ctx, consumerCfg, connection.ClientOptions, logger)
+	consumer, err := messagepipeline.NewGooglePubsubConsumer(ctx, consumerCfg, connection.ClientOptions, logger)
 	require.NoError(t, err)
 
 	bqClient, err := bigquery.NewClient(ctx, testProjectID, bigqueryConnection.ClientOptions...)

@@ -76,7 +76,7 @@ func (m *mockGCSClient) Bucket(name string) GCSBucketHandle {
 	return m.bucket
 }
 
-// MockMessageConsumer is a local mock implementation of the consumers.MessageConsumer interface.
+// MockMessageConsumer is a local mock implementation of the messagepipeline.MessageConsumer interface.
 type MockMessageConsumer struct {
 	msgChan  chan types.ConsumedMessage
 	doneChan chan struct{}

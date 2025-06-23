@@ -1,4 +1,4 @@
-package consumers
+package messagepipeline
 
 import (
 	"context"
@@ -23,7 +23,7 @@ import (
 // setupTestPubsub initializes a pstest.Server and configures the necessary
 // client options to connect to it. It also creates a topic and subscription for testing.
 // It returns the client options and a cleanup function to be deferred by the caller.
-func setupTestPubsub(t *testing.T, projectID, topicID, subID string) ([]option.ClientOption, func()) {
+func setupTestPubsub(t *testing.T, projectID, topicID, subID string) []option.ClientOption {
 	t.Helper()
 	ctx := context.Background()
 
@@ -54,12 +54,12 @@ func setupTestPubsub(t *testing.T, projectID, topicID, subID string) ([]option.C
 	require.NoError(t, err)
 
 	// The cleanup function now only needs to close the setup client and the server.
-	cleanup := func() {
+	t.Cleanup(func() {
 		require.NoError(t, client.Close())
 		require.NoError(t, srv.Close())
-	}
+	})
 
-	return opts, cleanup
+	return opts
 }
 
 // =============================================================================
@@ -97,8 +97,7 @@ func TestNewGooglePubsubConsumer_Success(t *testing.T) {
 	projectID := "test-project-success"
 	topicID := "test-topic-success"
 	subID := "test-sub-success"
-	opts, cleanup := setupTestPubsub(t, projectID, topicID, subID)
-	defer cleanup()
+	opts := setupTestPubsub(t, projectID, topicID, subID)
 
 	cfg := &GooglePubsubConsumerConfig{
 		ProjectID:      projectID,
@@ -119,8 +118,7 @@ func TestNewGooglePubsubConsumer_SubscriptionNotFound(t *testing.T) {
 	projectID := "test-project-fail"
 	topicID := "test-topic-fail"
 	subID := "test-sub-fail"
-	opts, cleanup := setupTestPubsub(t, projectID, topicID, subID)
-	defer cleanup()
+	opts := setupTestPubsub(t, projectID, topicID, subID)
 
 	badCfg := &GooglePubsubConsumerConfig{
 		ProjectID:      projectID,
@@ -139,8 +137,7 @@ func TestGooglePubsubConsumer_Lifecycle_And_MessageReception(t *testing.T) {
 	projectID := "test-project-lifecycle"
 	topicID := "test-topic-lifecycle"
 	subID := "test-sub-lifecycle"
-	opts, cleanup := setupTestPubsub(t, projectID, topicID, subID)
-	defer cleanup()
+	opts := setupTestPubsub(t, projectID, topicID, subID)
 
 	cfg := &GooglePubsubConsumerConfig{
 		ProjectID:              projectID,

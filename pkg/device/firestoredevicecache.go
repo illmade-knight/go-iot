@@ -1,4 +1,4 @@
-package connectors
+package device
 
 import (
 	"cloud.google.com/go/firestore"
