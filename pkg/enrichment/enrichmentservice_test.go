@@ -1,204 +1,367 @@
-package enrichment_test
+package enrichment
 
 import (
+	"cloud.google.com/go/pubsub"
 	"context"
 	"encoding/json"
 	"fmt"
-	"io"
+	"github.com/illmade-knight/go-iot/pkg/types"
 	"os"
+	"sync"
 	"testing"
 	"time"
 
-	"cloud.google.com/go/firestore"
-	"cloud.google.com/go/pubsub"
-	"github.com/go-redis/redis/v8"
-	"github.com/illmade-knight/go-iot/pkg/device" // Changed import path
-	"github.com/illmade-knight/go-iot/pkg/enrichment"
+	"github.com/illmade-knight/go-iot/pkg/device"
 	"github.com/illmade-knight/go-iot/pkg/helpers/emulators"
-	"github.com/illmade-knight/go-iot/pkg/messagepipeline" // No change
+	"github.com/illmade-knight/go-iot/pkg/messagepipeline"
+
 	"github.com/rs/zerolog"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
-// TestMessageProcessingService_Enrichment_Integration tests the full enrichment pipeline
-// using the generic MessageProcessingService.
-func TestMessageProcessingService_Enrichment_Integration(t *testing.T) {
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-	logger := zerolog.New(io.Discard) // Mute logger for tests
+// --- Corrected Struct Definitions for Test ---
+// The original `EnrichedMessage` embeds `types.ConsumedMessage`, which contains
+// non-serializable func() fields (Ack/Nack), causing the JSON error.
+// The fix is to define a new struct for the payload that only contains data.
 
-	const (
-		testProjectID           = "test-enrichment-project"
-		firestoreCollectionName = "devices"
-		inputSubscriptionID     = "test-input-sub"
-		inputTopicID            = "test-input-topic"
-		outputTopicID           = "test-enriched-output-topic"
-	)
+// TestEnrichedMessage is a data-only representation of the final message payload.
+// This is the struct that will be serialized to JSON and published.
+type TestEnrichedMessage struct {
+	OriginalPayload json.RawMessage   `json:"originalPayload"`
+	OriginalInfo    *types.DeviceInfo `json:"originalInfo"`
+	PublishTime     time.Time         `json:"publishTime"`
+	ClientID        string            `json:"clientID,omitempty"`
+	LocationID      string            `json:"locationID,omitempty"`
+	Category        string            `json:"category,omitempty"`
+}
 
-	// --- 1. Setup Emulators ---
-	// Firestore Emulator
-	firestoreEmulatorCfg := emulators.GetDefaultFirestoreConfig(testProjectID)
-	firestoreConnection := emulators.SetupFirestoreEmulator(t, ctx, firestoreEmulatorCfg)
-	firestoreClient, err := firestore.NewClient(ctx, testProjectID, firestoreConnection.ClientOptions...)
-	require.NoError(t, err, "Failed to create Firestore client")
-	t.Cleanup(func() { firestoreClient.Close() })
+// NewTestMessageEnricher creates the MessageTransformer for the test.
+// It correctly separates the data payload from the message's Ack/Nack functions.
+func NewTestMessageEnricher(fetcher device.DeviceMetadataFetcher, logger zerolog.Logger) messagepipeline.MessageTransformer[TestEnrichedMessage] {
+	return func(msg types.ConsumedMessage) (*TestEnrichedMessage, bool, error) {
+		// Start with the basic, un-enriched data.
+		payload := &TestEnrichedMessage{
+			OriginalPayload: msg.Payload,
+			OriginalInfo:    msg.DeviceInfo,
+			PublishTime:     msg.PublishTime,
+		}
 
-	// Pub/Sub Emulator
-	topicSubs := map[string]string{inputTopicID: inputSubscriptionID, outputTopicID: ""}
-	pubsubEmulatorCfg := emulators.GetDefaultPubsubConfig(testProjectID, topicSubs)
-	pubsubConnection := emulators.SetupPubsubEmulator(t, ctx, pubsubEmulatorCfg)
-	pubsubClient, err := pubsub.NewClient(ctx, testProjectID, pubsubConnection.ClientOptions...)
-	require.NoError(t, err, "Failed to create Pub/Sub client")
-	t.Cleanup(func() { pubsubClient.Close() })
+		// If there's no device info, we can't enrich, but we still pass the message on.
+		if msg.DeviceInfo == nil || msg.DeviceInfo.UID == "" {
+			logger.Warn().Str("msg_id", msg.ID).Msg("Message has no device UID for enrichment, skipping lookup.")
+			return payload, false, nil
+		}
 
-	// Redis Client (direct connection)
-	redisClient := redis.NewClient(&redis.Options{Addr: redisAddr})
-	require.NoError(t, redisClient.Ping(ctx).Err(), "Failed to connect to Redis")
-	t.Cleanup(func() { redisClient.Close() })
-	redisClient.FlushDB(ctx).Err() // Flush Redis for a clean state per test run
+		// Attempt to fetch metadata for enrichment.
+		deviceEUI := msg.DeviceInfo.UID
+		clientID, locationID, category, err := fetcher(deviceEUI)
+		if err != nil {
+			logger.Error().Err(err).Str("device_eui", deviceEUI).Str("msg_id", msg.ID).Msg("Failed to fetch device metadata for enrichment.")
+			// We NACK by returning an error, which stops this message from being published.
+			return nil, false, fmt.Errorf("failed to enrich message for EUI %s: %w", deviceEUI, err)
+		}
 
-	// Set emulator environment variables for the device package where they might be loaded
-	os.Setenv("GCP_PROJECT_ID", testProjectID)
-	os.Setenv("FIRESTORE_COLLECTION_DEVICES", firestoreCollectionName)
-	os.Setenv("PUBSUB_SUBSCRIPTION_ID_GARDEN_MONITOR_INPUT", inputSubscriptionID)
-	os.Setenv("PUBSUB_TOPIC_ID_ENRICHED_OUTPUT", outputTopicID)
-	os.Setenv("REDIS_ADDR", redisAddr)
-	os.Setenv("REDIS_CACHE_TTL", "1s")
+		// If successful, add the enriched data to the payload.
+		payload.ClientID = clientID
+		payload.LocationID = locationID
+		payload.Category = category
 
-	// --- 2. Prepare Data in Firestore (Device Metadata) ---
-	deviceEUI := "test-device-001"
-	expectedClientID := "client-A"
-	expectedLocationID := "location-X"
-	expectedCategory := "sensor"
-
-	_, err = firestoreClient.Collection(firestoreCollectionName).Doc(deviceEUI).Set(ctx, map[string]interface{}{
-		"clientID":       expectedClientID,
-		"locationID":     expectedLocationID,
-		"deviceCategory": expectedCategory,
-	})
-	require.NoError(t, err, "Failed to set up Firestore test data")
-	time.Sleep(100 * time.Millisecond) // Give Firestore a moment
-
-	// --- 3. Assemble the MessageProcessingService ---
-	// Pub/Sub Consumer
-	consumerCfg, err := messagepipeline.LoadGooglePubsubConsumerConfigFromEnv()
-	require.NoError(t, err)
-	pubsubConsumer, err := messagepipeline.NewGooglePubsubConsumer(ctx, consumerCfg, pubsubConnection.ClientOptions, logger)
-	require.NoError(t, err, "Failed to create Pub/Sub consumer")
-	defer pubsubConsumer.Stop()
-
-	// Device Metadata Fetcher (using Redis cache with Firestore fallback)
-	redisCfg, err := LoadRedisConfigFromEnv() // Using local helper for RedisConfig
-	require.NoError(t, err)
-
-	firestoreFetcherCfg, err := device.LoadFirestoreFetcherConfigFromEnv() // Using device.LoadFirestoreFetcherConfigFromEnv
-	require.NoError(t, err)
-
-	// Create Firestore fallback fetcher directly
-	firestoreFallbackFetcher, err := device.NewGoogleDeviceMetadataFetcher(ctx, firestoreClient, firestoreFetcherCfg, logger) // Using device.NewGoogleDeviceMetadataFetcher
-	require.NoError(t, err, "Failed to create Firestore fallback fetcher")
-	defer firestoreFallbackFetcher.Close()
-
-	// Create Redis caching fetcher with the Firestore fallback
-	redisCachingFetcher, err := device.NewRedisDeviceMetadataFetcher(ctx, redisCfg, firestoreFallbackFetcher.Fetch, logger) // Using device.NewRedisDeviceMetadataFetcher
-	require.NoError(t, err, "Failed to create Redis caching fetcher")
-	defer redisCachingFetcher.Close()
-
-	deviceMetadataFetcher := redisCachingFetcher.Fetch // This is now your DeviceMetadataFetcher func
-
-	// Message Enricher (Transformer) - now a function
-	messageEnricherTransformer := enrichment.NewMessageEnricher(deviceMetadataFetcher, logger)
-
-	// Pub/Sub Producer (Processor) - now implements new MessageProcessor interface
-	producerCfg, err := messagepipeline.LoadGooglePubsubProducerConfigFromEnv()
-	require.NoError(t, err)
-	pubsubProducer, err := messagepipeline.NewGooglePubsubProducer[enrichment.EnrichedMessage](
-		ctx,
-		pubsubClient,
-		producerCfg,
-		logger,
-	)
-	require.NoError(t, err, "Failed to create Pub/Sub producer")
-
-	// MessageProcessingService
-	processingService, err := messagepipeline.NewProcessingService[enrichment.EnrichedMessage](
-		1, // numWorkers
-		pubsubConsumer,
-		messageEnricherTransformer, // Pass the transformer function
-		logger,
-	)
-	require.NoError(t, err, "Failed to create message processing service")
-
-	// Start the service
-	err = processingService.Start() // Call Start() without context
-	require.NoError(t, err, "Failed to start message processing service")
-	defer processingService.Stop() // Call Stop() on the service
-
-	// Give services a moment to spin up
-	time.Sleep(1 * time.Second)
-
-	// --- 4. Publish a Test Message to the Input Topic ---
-	originalPayload := []byte(`{"temperature": 25.5, "humidity": 60}`)
-	inputMessage := &pubsub.Message{
-		Data: originalPayload,
-		Attributes: map[string]string{
-			"uid":      deviceEUI,
-			"location": "original-location-attr",
-		},
+		logger.Debug().Str("msg_id", msg.ID).Str("device_eui", deviceEUI).Msg("Message enriched with device metadata.")
+		return payload, false, nil
 	}
+}
 
-	inputTopic.Publish(ctx, inputMessage).Get(ctx) // Block until published
-	t.Log("Published test message to input topic")
+// --- Mock Device Metadata Cache ---
 
-	// Give the system a moment to process (especially important for async Pub/Sub receives)
-	time.Sleep(2 * time.Second) // Increased sleep to ensure processing and flushing
+// InMemoryDeviceMetadataCache provides a mock implementation of the DeviceMetadataFetcher
+// for testing purposes. It uses a simple map to store device metadata.
+type InMemoryDeviceMetadataCache struct {
+	mu       sync.RWMutex
+	metadata map[string]struct {
+		ClientID   string
+		LocationID string
+		Category   string
+	}
+}
 
-	// --- 5. Consume from the Output Topic and Assert Enrichment ---
-	// Create a new subscription to the output topic for testing purposes
-	testOutputSubscriptionID := "test-output-sub-" + fmt.Sprintf("%d", time.Now().UnixNano())
-	testOutputSub, err := pubsubClient.CreateSubscription(ctx, testOutputSubscriptionID, pubsub.SubscriptionConfig{
-		Topic:       outputTopic,
-		AckDeadline: 10 * time.Second,
+// NewInMemoryDeviceMetadataCache creates a new, empty in-memory cache.
+func NewInMemoryDeviceMetadataCache() *InMemoryDeviceMetadataCache {
+	return &InMemoryDeviceMetadataCache{
+		metadata: make(map[string]struct {
+			ClientID   string
+			LocationID string
+			Category   string
+		}),
+	}
+}
+
+// AddDevice populates the cache with metadata for a given device EUI.
+func (c *InMemoryDeviceMetadataCache) AddDevice(eui, clientID, locationID, category string) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.metadata[eui] = struct {
+		ClientID   string
+		LocationID string
+		Category   string
+	}{
+		ClientID:   clientID,
+		LocationID: locationID,
+		Category:   category,
+	}
+}
+
+// Fetcher returns a function that conforms to the device.DeviceMetadataFetcher interface.
+// This is the function that will be passed to the NewMessageEnricher.
+func (c *InMemoryDeviceMetadataCache) Fetcher() device.DeviceMetadataFetcher {
+	return func(deviceEUI string) (clientID, locationID, category string, err error) {
+		c.mu.RLock()
+		defer c.mu.RUnlock()
+
+		data, ok := c.metadata[deviceEUI]
+		if !ok {
+			// Return the specific error type that the main service expects.
+			return "", "", "", fmt.Errorf("%w: EUI %s not in cache", device.ErrMetadataNotFound, deviceEUI)
+		}
+		return data.ClientID, data.LocationID, data.Category, nil
+	}
+}
+
+// --- Integration Test ---
+
+func TestEnrichmentService_Integration(t *testing.T) {
+	// --- Test Setup ---
+	require.NotEmpty(t, "gcr.io/google.com/cloudsdktool/cloud-sdk:emulators", "Test requires Docker to be running.")
+
+	ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
+	defer cancel()
+
+	// Use a verbose logger for tests to see detailed component logs.
+	logger := zerolog.New(os.Stdout).Level(zerolog.DebugLevel).With().Timestamp().Logger()
+
+	// 1. Configure Pub/Sub topics and subscriptions for the test.
+	const (
+		projectID     = "test-project"
+		inputTopicID  = "raw-messages-topic"
+		inputSubID    = "enrichment-service-sub"
+		outputTopicID = "enriched-messages-topic"
+	)
+
+	// 2. Set up the Pub/Sub emulator.
+	// This will create the input topic and its corresponding subscription.
+	pubsubEmulatorCfg := emulators.GetDefaultPubsubConfig(projectID, map[string]string{
+		inputTopicID: inputSubID,
 	})
-	require.NoError(t, err, "Failed to create test output subscription")
-	t.Cleanup(func() {
-		testOutputSub.Delete(context.Background()) // Clean up the test subscription
+	emulatorConn := emulators.SetupPubsubEmulator(t, ctx, pubsubEmulatorCfg)
+	clientOptions := emulatorConn.ClientOptions
+
+	// Create a pubsub client that will be used for test setup and verification.
+	publisherClient, err := pubsub.NewClient(ctx, projectID, clientOptions...)
+	require.NoError(t, err)
+	defer publisherClient.Close()
+
+	// The producer requires the output topic to exist before it starts.
+	// We create it here manually. The test cases will create their own subscriptions to it.
+	outputTopic := publisherClient.Topic(outputTopicID)
+	exists, err := outputTopic.Exists(ctx)
+	require.NoError(t, err)
+	if !exists {
+		t.Logf("ENRICHMENT TEST [Setup]: Output topic '%s' does not exist, creating it.", outputTopicID)
+		outputTopic, err = publisherClient.CreateTopic(ctx, outputTopicID)
+		require.NoError(t, err)
+	}
+	inputTopic := publisherClient.Topic(inputTopicID)
+
+	// 3. Set up the mock metadata cache and populate it with test data.
+	metadataCache := NewInMemoryDeviceMetadataCache()
+	metadataCache.AddDevice("DEVICE_EUI_001", "client-123", "location-abc", "temperature-sensor")
+
+	// --- Instantiate Pipeline Components ---
+
+	// Consumer: Reads from the input topic.
+	consumerCfg := &messagepipeline.GooglePubsubConsumerConfig{
+		ProjectID:      projectID,
+		SubscriptionID: inputSubID,
+	}
+	consumer, err := messagepipeline.NewGooglePubsubConsumer(ctx, consumerCfg, clientOptions, logger)
+	require.NoError(t, err)
+
+	// Producer: Writes to the output topic.
+	producerCfg := &messagepipeline.GooglePubsubProducerConfig{
+		ProjectID:  projectID,
+		TopicID:    outputTopicID,
+		BatchDelay: 20 * time.Millisecond, // Use a short delay for testing.
+	}
+	// The producer needs its own client instance, as its lifecycle is managed by the pipeline.
+	producerClient, err := pubsub.NewClient(ctx, projectID, clientOptions...)
+	require.NoError(t, err)
+	defer producerClient.Close()
+	// NOTE: The generic type for the producer is now our test-specific, data-only struct.
+	producer, err := messagepipeline.NewGooglePubsubProducer[TestEnrichedMessage](ctx, producerClient, producerCfg, logger)
+	require.NoError(t, err)
+
+	// Transformer: Use the corrected enricher function.
+	enricher := NewTestMessageEnricher(metadataCache.Fetcher(), logger)
+
+	// Processing Service: Ties all the components together.
+	processingService, err := messagepipeline.NewProcessingService(
+		2, // Number of workers
+		consumer,
+		producer,
+		enricher,
+		logger,
+	)
+	require.NoError(t, err)
+
+	// --- Run Test Cases ---
+
+	// Start the entire pipeline once for all sub-tests.
+	err = processingService.Start()
+	require.NoError(t, err)
+	// Ensure the service is stopped gracefully at the end of all tests.
+	defer processingService.Stop()
+
+	// --- Test Case 1: Successful Enrichment ---
+	t.Run("Successful Enrichment", func(t *testing.T) {
+		// Create a dedicated subscription for this test case to verify the output.
+		outputSubID := "test-verifier-sub-success"
+		outputSub, err := publisherClient.CreateSubscription(ctx, outputSubID, pubsub.SubscriptionConfig{Topic: outputTopic})
+		require.NoError(t, err)
+		defer outputSub.Delete(ctx)
+
+		// Publish a test message that should be enriched successfully.
+		t.Logf("ENRICHMENT TEST [Success]: Publishing message with UID 'DEVICE_EUI_001'")
+		publishResult := inputTopic.Publish(ctx, &pubsub.Message{
+			Data: []byte(`{"value": 25.5}`),
+			Attributes: map[string]string{
+				"uid": "DEVICE_EUI_001",
+			},
+		})
+		_, err = publishResult.Get(ctx)
+		require.NoError(t, err)
+
+		// --- Verification ---
+		t.Log("ENRICHMENT TEST [Success]: Waiting for enriched message on output topic...")
+		receivedMsg := receiveSingleMessage(t, ctx, outputSub, 15*time.Second)
+
+		// Assert that we actually received a message.
+		require.NotNil(t, receivedMsg, "Did not receive an enriched message on the output topic within the timeout.")
+
+		// Unmarshal the result and check the enriched fields.
+		var enrichedResult TestEnrichedMessage
+		err = json.Unmarshal(receivedMsg.Data, &enrichedResult)
+		require.NoError(t, err, "Failed to unmarshal enriched message from output")
+
+		t.Logf("ENRICHMENT TEST [Success]: Received and unmarshalled enriched message: %+v", enrichedResult)
+
+		// Assertions: Check if the message was correctly enriched.
+		assert.Equal(t, "client-123", enrichedResult.ClientID, "ClientID was not enriched correctly.")
+		assert.Equal(t, "location-abc", enrichedResult.LocationID, "LocationID was not enriched correctly.")
+		assert.Equal(t, "temperature-sensor", enrichedResult.Category, "Category was not enriched correctly.")
+		require.NotNil(t, enrichedResult.OriginalInfo, "OriginalInfo should be preserved.")
+		assert.Equal(t, "DEVICE_EUI_001", enrichedResult.OriginalInfo.UID, "Original UID should be preserved.")
+		// Check that the original payload is still there
+		assert.JSONEq(t, `{"value": 25.5}`, string(enrichedResult.OriginalPayload))
 	})
 
-	received := make(chan enrichment.EnrichedMessage, 1)
-	receiveCtx, receiveCancel := context.WithTimeout(ctx, 10*time.Second) // Timeout for receiving
+	// --- Test Case 2: Device Not Found ---
+	t.Run("Device Not Found", func(t *testing.T) {
+		outputSubID := "test-verifier-sub-notfound"
+		outputSub, err := publisherClient.CreateSubscription(ctx, outputSubID, pubsub.SubscriptionConfig{Topic: outputTopic})
+		require.NoError(t, err)
+		defer outputSub.Delete(ctx)
+
+		// Publish a message with a UID that does not exist in our cache.
+		// This should cause the enricher to fail and the message to be NACKed.
+		t.Logf("ENRICHMENT TEST [Not Found]: Publishing message with unknown UID 'DEVICE_EUI_UNKNOWN'")
+		publishResult := inputTopic.Publish(ctx, &pubsub.Message{
+			Data: []byte(`{"value": 99.9}`),
+			Attributes: map[string]string{
+				"uid": "DEVICE_EUI_UNKNOWN",
+			},
+		})
+		_, err = publishResult.Get(ctx)
+		require.NoError(t, err)
+
+		// --- Verification ---
+		// We expect this message to be NACKed, so it should NOT appear on the output topic.
+		t.Log("ENRICHMENT TEST [Not Found]: Waiting to confirm NO message arrives on output topic...")
+		receivedMsg := receiveSingleMessage(t, ctx, outputSub, 5*time.Second) // Use a shorter timeout.
+
+		// Assert that we received NOTHING.
+		assert.Nil(t, receivedMsg, "A message was incorrectly published to the output topic for a non-existent device.")
+		t.Log("ENRICHMENT TEST [Not Found]: Confirmed no message arrived, as expected.")
+	})
+
+	// --- Test Case 3: Message without UID Attribute ---
+	t.Run("Message without UID Attribute", func(t *testing.T) {
+		outputSubID := "test-verifier-sub-nouid"
+		outputSub, err := publisherClient.CreateSubscription(ctx, outputSubID, pubsub.SubscriptionConfig{Topic: outputTopic})
+		require.NoError(t, err)
+		defer outputSub.Delete(ctx)
+
+		// Publish a message with no "uid" attribute.
+		// The enricher should skip the lookup and pass the message through unenriched.
+		t.Logf("ENRICHMENT TEST [No UID]: Publishing message without UID attribute")
+		publishResult := inputTopic.Publish(ctx, &pubsub.Message{
+			Data: []byte(`{"value": 101.0}`),
+		})
+		_, err = publishResult.Get(ctx)
+		require.NoError(t, err)
+
+		// --- Verification ---
+		t.Log("ENRICHMENT TEST [No UID]: Waiting for pass-through message on output topic...")
+		receivedMsg := receiveSingleMessage(t, ctx, outputSub, 15*time.Second)
+
+		require.NotNil(t, receivedMsg, "Did not receive a pass-through message on the output topic within the timeout.")
+
+		var unenrichedResult TestEnrichedMessage
+		err = json.Unmarshal(receivedMsg.Data, &unenrichedResult)
+		require.NoError(t, err, "Failed to unmarshal pass-through message from output")
+
+		t.Logf("ENRICHMENT TEST [No UID]: Received and unmarshalled pass-through message: %+v", unenrichedResult)
+
+		// Assertions: The enrichment fields should be empty.
+		assert.Empty(t, unenrichedResult.ClientID, "ClientID should be empty for a message without a UID.")
+		assert.Empty(t, unenrichedResult.LocationID, "LocationID should be empty.")
+		assert.Empty(t, unenrichedResult.Category, "Category should be empty.")
+		assert.Nil(t, unenrichedResult.OriginalInfo, "DeviceInfo should be nil as it wasn't in the original message attributes.")
+	})
+}
+
+// receiveSingleMessage is a helper to wait for exactly one message from a subscription
+// or return nil if the timeout is reached.
+func receiveSingleMessage(t *testing.T, ctx context.Context, sub *pubsub.Subscription, timeout time.Duration) *pubsub.Message {
+	t.Helper()
+	var receivedMsg *pubsub.Message
+	var mu sync.RWMutex
+
+	// Create a context for receiving the message, with the specified timeout.
+	receiveCtx, receiveCancel := context.WithTimeout(ctx, timeout)
 	defer receiveCancel()
 
-	go func() { // Run Receive in a goroutine
-		err := testOutputSub.Receive(receiveCtx, func(ctx context.Context, msg *pubsub.Message) {
-			var enrichedMsg enrichment.EnrichedMessage
-			if unmarshalErr := json.Unmarshal(msg.Data, &enrichedMsg); unmarshalErr != nil {
-				t.Errorf("Failed to unmarshal received message: %v", unmarshalErr)
-				msg.Nack()
-				return
-			}
-			received <- enrichedMsg
+	// Use a goroutine to receive from the output subscription.
+	err := sub.Receive(receiveCtx, func(ctx context.Context, msg *pubsub.Message) {
+		mu.Lock()
+		defer mu.Unlock()
+		if receivedMsg == nil {
+			t.Logf("Helper: Received message ID %s from subscription %s.", msg.ID, sub.ID())
+			receivedMsg = msg
 			msg.Ack()
-		})
-		if err != nil && err != context.Canceled {
-			t.Logf("Output subscription Receive exited with error: %v", err)
+			receiveCancel() // Stop receiving once we have our message.
+		} else {
+			// This shouldn't happen if the test is structured correctly, but it's a good safeguard.
+			t.Logf("Helper: Received an unexpected extra message (ID: %s), Nacking it.", msg.ID)
+			msg.Nack()
 		}
-	}()
+	})
 
-	select {
-	case enriched := <-received:
-		t.Log("Received enriched message from output topic")
-		assert.Equal(t, string(originalPayload), string(enriched.Payload), "Original payload should match")
-		assert.Equal(t, expectedClientID, enriched.ClientID, "Client ID should be enriched")
-		assert.Equal(t, expectedLocationID, enriched.LocationID, "Location ID should be enriched")
-		assert.Equal(t, expectedCategory, enriched.Category, "Category should be enriched")
-		assert.Equal(t, deviceEUI, enriched.ConsumedMessage.DeviceInfo.UID, "Device UID should be present")
-		assert.Equal(t, "original-location-attr", enriched.ConsumedMessage.DeviceInfo.Location, "Original Pub/Sub attribute location should persist if not explicitly overwritten")
-
-	case <-receiveCtx.Done():
-		t.Fatalf("Timeout waiting for enriched message: %v", receiveCtx.Err())
+	// Check if Receive exited due to context cancellation (which is expected on success or timeout)
+	if err != nil && err != context.Canceled {
+		t.Fatalf("Helper: Failed to receive from subscription %s: %v", sub.ID(), err)
 	}
 
-	t.Log("Enrichment service integration test completed successfully.")
+	mu.RLock()
+	defer mu.RUnlock()
+	return receivedMsg
 }

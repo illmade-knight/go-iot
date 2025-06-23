@@ -29,10 +29,11 @@ type DeviceMetadataFetcher = device.DeviceMetadataFetcher
 // NewMessageEnricher creates the MessageTransformer function for enrichment.
 // It returns a function that conforms to the messagepipeline.MessageTransformer signature.
 func NewMessageEnricher(fetcher DeviceMetadataFetcher, logger zerolog.Logger) messagepipeline.MessageTransformer[EnrichedMessage] {
-	return func(msg types.ConsumedMessage) (transformedPayload EnrichedMessage, skip bool, err error) {
+
+	return func(msg types.ConsumedMessage) (transformedPayload *EnrichedMessage, skip bool, err error) {
 		if msg.DeviceInfo == nil || msg.DeviceInfo.UID == "" {
 			logger.Warn().Str("msg_id", msg.ID).Msg("Message has no device UID for enrichment, skipping lookup.")
-			return EnrichedMessage{ConsumedMessage: msg}, false, nil // Pass original message, don't skip pipeline
+			return &EnrichedMessage{ConsumedMessage: msg}, false, nil // Pass original message, don't skip pipeline
 		}
 
 		deviceEUI := msg.DeviceInfo.UID // Assuming UID is the deviceEUI
@@ -42,10 +43,10 @@ func NewMessageEnricher(fetcher DeviceMetadataFetcher, logger zerolog.Logger) me
 			// If device.ErrMetadataNotFound, you might choose to ACK and skip (false, true)
 			// or NACK (false, error). Nacking means retrying.
 			// For this example, let's Nack if enrichment fails.
-			return EnrichedMessage{}, false, fmt.Errorf("failed to enrich message for EUI %s: %w", deviceEUI, err)
+			return &EnrichedMessage{}, false, fmt.Errorf("failed to enrich message for EUI %s: %w", deviceEUI, err)
 		}
 
-		enrichedMsg := EnrichedMessage{
+		enrichedMsg := &EnrichedMessage{
 			ConsumedMessage: msg,
 			ClientID:        clientID,
 			LocationID:      locationID,
