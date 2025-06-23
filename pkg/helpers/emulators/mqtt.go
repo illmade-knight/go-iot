@@ -20,18 +20,20 @@ const (
 
 func GetDefaultMqttImageContainer() ImageContainer {
 	return ImageContainer{
-		EmulatorImage:    mosquitoImage,
-		EmulatorHTTPPort: mosquitoPort,
+		EmulatorImage: mosquitoImage,
+		EmulatorPort:  mosquitoPort,
 	}
 }
 
-func SetupMosquittoContainer(t *testing.T, ctx context.Context, cfg ImageContainer) (brokerURL string, cleanupFunc func()) {
+// SetupMosquittoContainer starts an MQTT (Mosquitto) emulator container.
+// It returns an EmulatorConnectionInfo struct with connection details.
+func SetupMosquittoContainer(t *testing.T, ctx context.Context, cfg ImageContainer) EmulatorConnectionInfo { // Changed return type
 	t.Helper()
 	confPath := filepath.Join(t.TempDir(), "mosquitto.conf")
 	err := os.WriteFile(confPath, []byte("listener 1883\nallow_anonymous true\n"), 0644)
 	require.NoError(t, err)
 
-	port := fmt.Sprintf("%s/tcp", cfg.EmulatorHTTPPort)
+	port := fmt.Sprintf("%s/tcp", cfg.EmulatorPort)
 
 	req := testcontainers.ContainerRequest{
 		Image:        cfg.EmulatorImage,
@@ -41,14 +43,17 @@ func SetupMosquittoContainer(t *testing.T, ctx context.Context, cfg ImageContain
 	}
 	container, err := testcontainers.GenericContainer(ctx, testcontainers.GenericContainerRequest{ContainerRequest: req, Started: true})
 	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, container.Terminate(ctx)) })
 
 	host, err := container.Host(ctx)
 	require.NoError(t, err)
 	mappedPort, err := container.MappedPort(ctx, "1883/tcp")
 	require.NoError(t, err)
-	brokerURL = fmt.Sprintf("tcp://%s:%s", host, mappedPort.Port())
+	brokerURL := fmt.Sprintf("tcp://%s:%s", host, mappedPort.Port())
 
-	return brokerURL, func() { require.NoError(t, container.Terminate(ctx)) }
+	return EmulatorConnectionInfo{ // Populating the new struct
+		EmulatorAddress: brokerURL,
+	}
 }
 
 func CreateTestMqttPublisher(brokerURL, clientID string) (mqtt.Client, error) {

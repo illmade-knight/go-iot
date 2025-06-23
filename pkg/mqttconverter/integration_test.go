@@ -46,18 +46,16 @@ func TestIngestionService_Integration_MQTT_To_PubSub(t *testing.T) {
 
 	// --- 1. Setup Emulators ---
 	mosquitoConfig := emulators.GetDefaultMqttImageContainer()
-	mqttBrokerURL, mosquittoCleanup := emulators.SetupMosquittoContainer(t, ctx, mosquitoConfig)
-	defer mosquittoCleanup()
+	mqttConnection := emulators.SetupMosquittoContainer(t, ctx, mosquitoConfig)
 
 	pubsubConfig := emulators.GetDefaultPubsubConfig(testProjectID, map[string]string{testPubsubTopicID: testPubsubSubscriptionID})
-	pubsubOptions, pubsubEmulatorCleanup := emulators.SetupPubSubEmulator(t, ctx, pubsubConfig)
-	defer pubsubEmulatorCleanup()
+	pubsubConnection := emulators.SetupPubsubEmulator(t, ctx, pubsubConfig)
 
 	// --- 3. Initialize IngestionService Components ---
 	serviceLogger := testLogger.With().Str("component", "IngestionService").Logger()
 
 	mqttCfg := &mqttconverter.MQTTClientConfig{
-		BrokerURL:        mqttBrokerURL,
+		BrokerURL:        mqttConnection.EmulatorAddress,
 		Topic:            testMqttTopicPattern,
 		ClientIDPrefix:   testMqttClientIDPrefix,
 		KeepAlive:        30 * time.Second,
@@ -68,7 +66,7 @@ func TestIngestionService_Integration_MQTT_To_PubSub(t *testing.T) {
 	pubsubCfg := mqttconverter.GooglePubsubPublisherConfig{
 		ProjectID:       testProjectID,
 		TopicID:         testPubsubTopicID,
-		ClientOptions:   pubsubOptions,
+		ClientOptions:   pubsubConnection.ClientOptions,
 		PublishSettings: mqttconverter.GetDefaultPublishSettings(),
 	}
 
@@ -104,21 +102,16 @@ func TestIngestionService_Integration_MQTT_To_PubSub(t *testing.T) {
 	time.Sleep(2 * time.Second) // Give a moment for MQTT subscriptions to establish
 
 	// --- 5. Setup Test MQTT Publisher ---
-	mqttTestPubClient, err := emulators.CreateTestMqttPublisher(mqttBrokerURL, testMqttPublisherPrefix+"main")
+	mqttTestPubClient, err := emulators.CreateTestMqttPublisher(mqttConnection.EmulatorAddress, testMqttPublisherPrefix+"main")
 	require.NoError(t, err, "Failed to create test MQTT publisher")
 	defer mqttTestPubClient.Disconnect(250)
 
-	// --- 6. Setup Test Pub/Sub Subscriber Client & Topic/Sub ---
-	// MODIFIED: Use a single client for all Pub/Sub test operations.
-	subClient, err := pubsub.NewClient(ctx, testProjectID, pubsubOptions...)
+	// --- 6. Setup Test Pub/Sub Subscriber Client ---
+	// The SetupPubsubEmulator function already creates the topic and subscription for us.
+	// We just need to create a client to listen on the subscription.
+	subClient, err := pubsub.NewClient(ctx, testProjectID, pubsubConnection.ClientOptions...)
 	require.NoError(t, err, "Failed to create Pub/Sub client for subscriptions")
 	defer subClient.Close()
-
-	// MODIFIED: Create the topic and subscription using the single test client.
-	topic, err := subClient.CreateTopic(ctx, testPubsubTopicID)
-	require.NoError(t, err, "Failed to create Pub/Sub topic for test")
-	_, err = subClient.CreateSubscription(ctx, testPubsubSubscriptionID, pubsub.SubscriptionConfig{Topic: topic})
-	require.NoError(t, err, "Failed to create Pub/Sub subscription for test")
 
 	processedSub := subClient.Subscription(testPubsubSubscriptionID)
 

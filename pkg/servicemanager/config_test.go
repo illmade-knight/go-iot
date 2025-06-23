@@ -25,7 +25,7 @@ func TestLoadAndValidateConfig(t *testing.T) {
 	validBaseYAML := `
 default_project_id: "default-project"
 resources:
-  pubsub_topics:
+  messaging_topics:
     - name: "topic-a"
 `
 
@@ -37,7 +37,7 @@ resources:
 		checkConfig   func(t *testing.T, cfg *TopLevelConfig)
 	}{
 		{
-			name:        "Valid configuration with PubSub",
+			name:        "Valid configuration with Messaging Topic",
 			yamlContent: validBaseYAML,
 			expectError: false,
 			checkConfig: func(t *testing.T, cfg *TopLevelConfig) {
@@ -60,7 +60,7 @@ resources:
 				require.NotNil(t, cfg)
 				assert.Len(t, cfg.Resources.GCSBuckets, 1)
 				assert.Equal(t, "my-gcs-bucket-only", cfg.Resources.GCSBuckets[0].Name)
-				assert.Empty(t, cfg.Resources.MessagingTopics, "Should have no pubsub topics")
+				assert.Empty(t, cfg.Resources.MessagingTopics, "Should have no messaging topics")
 			},
 		},
 		{
@@ -79,7 +79,7 @@ resources:
 			name: "Missing default_project_id (warning only)",
 			yamlContent: `
 resources:
-  pubsub_topics:
+  messaging_topics:
     - name: "topic-a"
 `,
 			expectError: false, // This is not a fatal error
@@ -95,7 +95,7 @@ default_project_id: "project"
 resources: {}
 `,
 			expectError:   true,
-			errorContains: "no resources (GCS buckets, Pub/Sub, BigQuery) defined",
+			errorContains: "no resources (e.g., gcs_buckets, messaging_topics) defined",
 		},
 		{
 			name: "GCS bucket missing name",
@@ -116,7 +116,7 @@ environments:
   test:
     project_id: "my-test-gcp-project"
 resources:
-  pubsub_topics:
+  messaging_topics:
     - name: "ingested-device-data"
   gcs_buckets:
     - name: "iot-device-archive-bucket"

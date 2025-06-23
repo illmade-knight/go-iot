@@ -8,8 +8,6 @@ import (
 	"github.com/stretchr/testify/require"
 	"github.com/testcontainers/testcontainers-go"
 	"github.com/testcontainers/testcontainers-go/wait"
-	"google.golang.org/api/option"
-	"net/http"
 	"strings"
 	"testing"
 	"time"
@@ -32,7 +30,7 @@ func GetDefaultBigQueryConfig(projectID string, datasetTables map[string]string,
 		GCImageContainer: GCImageContainer{
 			ImageContainer: ImageContainer{
 				EmulatorImage:    testBigQueryEmulatorImage,
-				EmulatorHTTPPort: testBigQueryRestPort,
+				EmulatorPort:     testBigQueryRestPort,
 				EmulatorGRPCPort: testBigQueryGRPCPort,
 			},
 			ProjectID:       projectID,
@@ -43,16 +41,16 @@ func GetDefaultBigQueryConfig(projectID string, datasetTables map[string]string,
 	}
 }
 
-func SetupBigQueryEmulator(t *testing.T, ctx context.Context, cfg BigQueryConfig) (opts []option.ClientOption, cleanupFunc func()) {
+func SetupBigQueryEmulator(t *testing.T, ctx context.Context, cfg BigQueryConfig) EmulatorConnectionInfo {
 	t.Helper()
-	httpPort := fmt.Sprintf("%s/tcp", cfg.EmulatorHTTPPort)
+	httpPort := fmt.Sprintf("%s/tcp", cfg.EmulatorPort)
 	grpcPort := fmt.Sprintf("%s/tcp", cfg.EmulatorGRPCPort)
 	req := testcontainers.ContainerRequest{
 		Image:        cfg.EmulatorImage,
 		ExposedPorts: []string{httpPort, grpcPort},
 		Cmd: []string{
 			"--project=" + cfg.ProjectID,
-			"--port=" + cfg.EmulatorHTTPPort,
+			"--port=" + cfg.EmulatorPort,
 			"--grpc-port=" + cfg.EmulatorGRPCPort,
 		},
 		WaitingFor: wait.ForAll(
@@ -62,6 +60,7 @@ func SetupBigQueryEmulator(t *testing.T, ctx context.Context, cfg BigQueryConfig
 	}
 	container, err := testcontainers.GenericContainer(ctx, testcontainers.GenericContainerRequest{ContainerRequest: req, Started: true})
 	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, container.Terminate(ctx)) })
 
 	host, err := container.Host(ctx)
 	require.NoError(t, err)
@@ -70,14 +69,12 @@ func SetupBigQueryEmulator(t *testing.T, ctx context.Context, cfg BigQueryConfig
 	mappedRestPort, err := container.MappedPort(ctx, nat.Port(httpPort))
 	require.NoError(t, err)
 
-	endpoint := fmt.Sprintf("http://%s:%s", host, mappedRestPort.Port())
+	endpointGRPC := fmt.Sprintf("grpc://%s:%s", host, mappedGrpcPort.Port())
+	endpointHTTP := fmt.Sprintf("http://%s:%s", host, mappedRestPort.Port())
 
-	opts = []option.ClientOption{option.WithEndpoint(endpoint), option.WithoutAuthentication(), option.WithHTTPClient(&http.Client{})}
+	opts := getEmulatorOptions(endpointHTTP)
 
-	if cfg.SetEnvVariables {
-		t.Setenv("BIGQUERY_EMULATOR_HOST", fmt.Sprintf("%s:%s", host, mappedGrpcPort.Port()))
-		t.Setenv("BIGQUERY_API_ENDPOINT", endpoint)
-	}
+	hostURL := fmt.Sprintf("%s:%s", host, mappedGrpcPort.Port())
 
 	client, err := bigquery.NewClient(ctx, cfg.ProjectID, opts...)
 	require.NoError(t, err)
@@ -100,5 +97,16 @@ func SetupBigQueryEmulator(t *testing.T, ctx context.Context, cfg BigQueryConfig
 		}
 	}
 
-	return opts, func() { require.NoError(t, container.Terminate(ctx)) }
+	return EmulatorConnectionInfo{
+		HTTPEndpoint: Endpoint{
+			Port:     httpPort,
+			Endpoint: endpointHTTP,
+		},
+		GRPCEndpoint: Endpoint{
+			Port:     grpcPort,
+			Endpoint: endpointGRPC,
+		},
+		EmulatorAddress: hostURL,
+		ClientOptions:   opts,
+	}
 }

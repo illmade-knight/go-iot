@@ -44,9 +44,9 @@ type ServiceSpec struct {
 	Name           string                 `yaml:"name"`
 	ServiceAccount string                 `yaml:"service_account"`
 	SourcePath     string                 `yaml:"source_path"`
-	MinInstances   int                    `yaml:"min_instances"` // <-- ADD THIS LINE
+	MinInstances   int                    `yaml:"min_instances"`
 	Metadata       map[string]interface{} `yaml:"metadata,omitempty"`
-	HealthCheck    *HealthCheckSpec       `yaml:"health_check,omitempty"` // NEW: For Cloud Run health checks
+	HealthCheck    *HealthCheckSpec       `yaml:"health_check,omitempty"`
 }
 
 // HealthCheckSpec defines the health check configuration for a service.

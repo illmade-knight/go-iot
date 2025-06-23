@@ -9,7 +9,6 @@ import (
 	"github.com/testcontainers/testcontainers-go"
 	"github.com/testcontainers/testcontainers-go/wait"
 	"google.golang.org/api/option"
-	"os"
 	"testing"
 	"time"
 )
@@ -29,8 +28,8 @@ func GetDefaultGCSConfig(projectID, baseBucket string) GCSConfig {
 	return GCSConfig{
 		GCImageContainer: GCImageContainer{
 			ImageContainer: ImageContainer{
-				EmulatorImage:    testGCSImage,
-				EmulatorHTTPPort: testGCSPort,
+				EmulatorImage: testGCSImage,
+				EmulatorPort:  testGCSPort,
 			},
 			ProjectID: projectID,
 		},
@@ -39,14 +38,31 @@ func GetDefaultGCSConfig(projectID, baseBucket string) GCSConfig {
 	}
 }
 
-func SetupGCSEmulator(t *testing.T, ctx context.Context, cfg GCSConfig) (*storage.Client, func()) {
+func GetStorageClient(t *testing.T, ctx context.Context, cfg GCSConfig, opts []option.ClientOption) *storage.Client {
+
+	gcsClient, err := storage.NewClient(ctx, opts...)
+	require.NoError(t, err)
+
+	t.Cleanup(func() {
+		require.NoError(t, gcsClient.Close())
+	})
+
+	err = gcsClient.Bucket(cfg.BaseBucket).Create(ctx, cfg.ProjectID, nil)
+	require.NoError(t, err)
+
+	return gcsClient
+}
+
+// SetupGCSEmulator starts a GCS emulator container and configures it.
+// It returns the connection information for connecting to the emulator.
+func SetupGCSEmulator(t *testing.T, ctx context.Context, cfg GCSConfig) EmulatorConnectionInfo {
 	t.Helper()
 
-	httpPort := fmt.Sprintf("%s/tcp", cfg.EmulatorHTTPPort)
+	httpPort := fmt.Sprintf("%s/tcp", cfg.EmulatorPort)
 	req := testcontainers.ContainerRequest{
 		Image:        cfg.EmulatorImage,
 		ExposedPorts: []string{httpPort},
-		Cmd:          []string{"-scheme", "http"},
+		Cmd:          []string{"-scheme", "http"}, // Explicitly tell fake-gcs-server to use http
 		WaitingFor: wait.ForHTTP(cfg.BaseStorage).WithPort(nat.Port(httpPort)).WithStatusCodeMatcher(
 			func(status int) bool {
 				return status > 0
@@ -54,18 +70,22 @@ func SetupGCSEmulator(t *testing.T, ctx context.Context, cfg GCSConfig) (*storag
 	}
 	container, err := testcontainers.GenericContainer(ctx, testcontainers.GenericContainerRequest{ContainerRequest: req, Started: true})
 	require.NoError(t, err)
-	endpoint, err := container.Endpoint(ctx, "")
-	require.NoError(t, err)
-	t.Setenv("STORAGE_EMULATOR_HOST", endpoint)
 
-	gcsClient, err := storage.NewClient(ctx, option.WithoutAuthentication(), option.WithEndpoint(os.Getenv("STORAGE_EMULATOR_HOST")))
-	require.NoError(t, err)
+	emulatorEndpoint, err := container.Endpoint(ctx, "")
 
-	err = gcsClient.Bucket(cfg.BaseBucket).Create(ctx, cfg.ProjectID, nil)
-	require.NoError(t, err)
+	t.Setenv("STORAGE_EMULATOR_HOST", emulatorEndpoint)
 
-	return gcsClient, func() {
-		gcsClient.Close()
+	opts := getEmulatorOptions(emulatorEndpoint)
+
+	t.Cleanup(func() {
 		require.NoError(t, container.Terminate(ctx))
+	})
+
+	return EmulatorConnectionInfo{
+		HTTPEndpoint: Endpoint{
+			Port:     cfg.EmulatorPort,
+			Endpoint: emulatorEndpoint,
+		},
+		ClientOptions: opts,
 	}
 }

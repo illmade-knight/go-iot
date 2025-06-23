@@ -2,6 +2,7 @@ package servicemanager_test
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"testing"
@@ -28,7 +29,7 @@ func (m *MockMessagingTopic) Exists(ctx context.Context) (bool, error) {
 	args := m.Called(ctx)
 	return args.Bool(0), args.Error(1)
 }
-func (m *MockMessagingTopic) Update(ctx context.Context, cfg servicemanager.MessagingTopicConfigToUpdate) (*servicemanager.MessagingTopicConfig, error) {
+func (m *MockMessagingTopic) Update(ctx context.Context, cfg servicemanager.MessagingTopicConfig) (*servicemanager.MessagingTopicConfig, error) {
 	args := m.Called(ctx, cfg)
 	if args.Get(0) == nil {
 		return nil, args.Error(1)
@@ -52,7 +53,7 @@ func (m *MockMessagingSubscription) Exists(ctx context.Context) (bool, error) {
 	args := m.Called(ctx)
 	return args.Bool(0), args.Error(1)
 }
-func (m *MockMessagingSubscription) Update(ctx context.Context, cfg servicemanager.MessagingSubscriptionConfigToUpdate) (*servicemanager.MessagingSubscriptionConfig, error) {
+func (m *MockMessagingSubscription) Update(ctx context.Context, cfg servicemanager.MessagingSubscriptionConfig) (*servicemanager.MessagingSubscriptionConfig, error) {
 	args := m.Called(ctx, cfg)
 	if args.Get(0) == nil {
 		return nil, args.Error(1)
@@ -96,6 +97,12 @@ func (m *MockMessagingClient) Close() error {
 	return args.Error(0)
 }
 
+// *** FIX: Correctly pass the arguments to the mock framework. ***
+func (m *MockMessagingClient) Validate(resources servicemanager.ResourcesSpec) error {
+	args := m.Called(resources)
+	return args.Error(0)
+}
+
 // --- Helper Function ---
 
 func getTestMessagingConfig() *servicemanager.TopLevelConfig {
@@ -129,6 +136,9 @@ func TestPubSubManager_Setup_CreateNewResources(t *testing.T) {
 	config := getTestMessagingConfig()
 	ctx := context.Background()
 
+	// *** FIX: Add expectation for the Validate call. ***
+	mockClient.On("Validate", config.Resources).Return(nil)
+
 	mockTopic1 := new(MockMessagingTopic)
 	mockClient.On("Topic", "test-topic-1").Return(mockTopic1)
 	mockTopic1.On("Exists", ctx).Return(false, nil)
@@ -153,6 +163,32 @@ func TestPubSubManager_Setup_CreateNewResources(t *testing.T) {
 	// Assert
 	assert.NoError(t, err)
 	mockClient.AssertExpectations(t)
+}
+
+// *** ADDED: New test case for validation failure. ***
+func TestPubSubManager_Setup_ValidationFails(t *testing.T) {
+	// Arrange
+	mockClient := new(MockMessagingClient)
+	logger := zerolog.New(io.Discard)
+	manager, err := servicemanager.NewMessagingManager(mockClient, logger)
+	require.NoError(t, err)
+
+	config := getTestMessagingConfig()
+	ctx := context.Background()
+
+	expectedErr := errors.New("invalid subscription config")
+	mockClient.On("Validate", config.Resources).Return(expectedErr)
+
+	// Act
+	err = manager.Setup(ctx, config, "test")
+
+	// Assert
+	assert.Error(t, err)
+	assert.Equal(t, expectedErr, err)
+	mockClient.AssertExpectations(t)
+	// Ensure no other calls were made
+	mockClient.AssertNotCalled(t, "Topic", mock.Anything)
+	mockClient.AssertNotCalled(t, "Subscription", mock.Anything)
 }
 
 func TestPubSubManager_Teardown_Success(t *testing.T) {

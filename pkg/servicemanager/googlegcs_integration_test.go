@@ -28,8 +28,9 @@ func TestGoogleGCSAdapter_Integration_WithManager(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 	defer cancel()
 
-	client, emulatorCleanupFunc := emulators.SetupGCSEmulator(t, ctx, emulators.GetDefaultGCSConfig(gcsTestProjectID, gcsTestBucket))
-	defer emulatorCleanupFunc()
+	gceCfg := emulators.GetDefaultGCSConfig(gcsTestProjectID, gcsTestBucket)
+	connection := emulators.SetupGCSEmulator(t, ctx, gceCfg)
+	client := emulators.GetStorageClient(t, ctx, gceCfg, connection.ClientOptions)
 
 	// --- Configuration ---
 	testBucketName := "adapter-test-bucket"

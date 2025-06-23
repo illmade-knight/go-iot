@@ -2,7 +2,7 @@ package emulators
 
 type ImageContainer struct {
 	EmulatorImage    string
-	EmulatorHTTPPort string
+	EmulatorPort     string
 	EmulatorGRPCPort string
 }
 

@@ -20,7 +20,6 @@ import (
 	"cloud.google.com/go/pubsub"
 	"github.com/illmade-knight/go-iot/pkg/bqstore"
 	"github.com/illmade-knight/go-iot/pkg/consumers" // Using shared consumers package
-	//"github.com/illmade-knight/go-iot/pkg/types"    // Using shared types package
 	"github.com/rs/zerolog"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -56,16 +55,14 @@ func TestBigQueryService_Integration_FullFlow(t *testing.T) {
 
 	pubsubConfig := emulators.GetDefaultPubsubConfig(testProjectID, map[string]string{testInputTopicID: testInputSubscriptionID})
 
-	opts, pubsubEmulatorCleanup := emulators.SetupPubSubEmulator(t, pubsubCtx, pubsubConfig)
-	defer pubsubEmulatorCleanup()
+	connection := emulators.SetupPubsubEmulator(t, pubsubCtx, pubsubConfig)
 
 	bigqueryCtx, bigqueryCancel := context.WithTimeout(ctx, time.Second*20)
 	defer bigqueryCancel()
 
 	bigqueryCfg := emulators.GetDefaultBigQueryConfig(testProjectID, map[string]string{testBigQueryDatasetID: testBigQueryTableID},
 		map[string]interface{}{testBigQueryTableID: types.GardenMonitorReadings{}})
-	bigqueryOptions, bigqueryEmulatorCleanup := emulators.SetupBigQueryEmulator(t, bigqueryCtx, bigqueryCfg)
-	defer bigqueryEmulatorCleanup()
+	bigqueryConnection := emulators.SetupBigQueryEmulator(t, bigqueryCtx, bigqueryCfg)
 
 	// --- Configuration setup (Unchanged) ---
 	var logBuf bytes.Buffer
@@ -88,10 +85,10 @@ func TestBigQueryService_Integration_FullFlow(t *testing.T) {
 
 	// --- Initialize Components with new, refactored structure ---
 	//opts := []option.ClientOption{option.WithEndpoint("localhost:58752"), option.WithoutAuthentication()}
-	consumer, err := consumers.NewGooglePubsubConsumer(ctx, consumerCfg, opts, logger)
+	consumer, err := consumers.NewGooglePubsubConsumer(ctx, consumerCfg, connection.ClientOptions, logger)
 	require.NoError(t, err)
 
-	bqClient, err := bigquery.NewClient(ctx, testProjectID, bigqueryOptions...)
+	bqClient, err := bigquery.NewClient(ctx, testProjectID, bigqueryConnection.ClientOptions...)
 	require.NotNil(t, bqClient)
 	defer bqClient.Close()
 
@@ -119,18 +116,18 @@ func TestBigQueryService_Integration_FullFlow(t *testing.T) {
 
 	var lastTestPayload types.GardenMonitorReadings
 	for i := 0; i < messageCount; i++ {
-		testPayload := types.GardenMonitorReadings{
+		iPayload := types.GardenMonitorReadings{
 			DE:       testDeviceUID,
 			Sequence: 1337 + i,
 			Battery:  95 - i,
 		}
-		lastTestPayload = testPayload
+		lastTestPayload = iPayload
 
 		testUpstreamMsg := TestUpstreamMessage{
 			Topic:     "devices/garden-monitor/telemetry",
 			MessageID: "test-message-id-" + strconv.Itoa(i),
 			Timestamp: time.Now().UTC().Truncate(time.Second),
-			Payload:   &testPayload,
+			Payload:   &lastTestPayload,
 		}
 		msgDataBytes, err := json.Marshal(testUpstreamMsg)
 		require.NoError(t, err)

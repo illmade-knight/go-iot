@@ -101,8 +101,7 @@ func TestBigQueryManager_Integration_SetupAndTeardown(t *testing.T) {
 	// SetupBigQueryEmulatorForManagerTest now sets the necessary env vars
 	dm := map[string]string{}
 	sm := map[string]interface{}{}
-	clientOptions, bqEmulatorCleanupFunc := emulators.SetupBigQueryEmulator(t, ctx, emulators.GetDefaultBigQueryConfig(projectID, dm, sm))
-	defer bqEmulatorCleanupFunc()
+	clientConnection := emulators.SetupBigQueryEmulator(t, ctx, emulators.GetDefaultBigQueryConfig(projectID, dm, sm))
 
 	// Define a sample configuration YAML content
 	yamlTimePartitioningField := "original_mqtt_time"
@@ -154,7 +153,7 @@ resources:
 
 	// Create the BQ client for the manager using the general helper.
 	// GOOGLE_CLOUD_PROJECT, BIGQUERY_EMULATOR_HOST, BIGQUERY_API_ENDPOINT are set by setupBigQueryEmulatorForManagerTest
-	managerConcreteClient := newEmulatorBQClient(ctx, t, projectID, clientOptions)
+	managerConcreteClient := newEmulatorBQClient(ctx, t, projectID, clientConnection.ClientOptions)
 	require.NotNil(t, managerConcreteClient, "Manager BQ client should not be nil")
 	defer managerConcreteClient.Close()
 
@@ -170,7 +169,7 @@ resources:
 		require.NoError(t, err, "BigQueryManager.Setup failed")
 
 		// Verification client - create a new one using the same helper
-		verifyClient := newEmulatorBQClient(ctx, t, testSMBQProjectID, clientOptions)
+		verifyClient := newEmulatorBQClient(ctx, t, testSMBQProjectID, clientConnection.ClientOptions)
 		defer verifyClient.Close()
 
 		// Verify dataset1
@@ -241,7 +240,7 @@ resources:
 		err = manager.Teardown(ctx, cfg, "integration_test_bq_sm")
 		require.NoError(t, err, "BigQueryManager.Teardown failed")
 
-		verifyClient := newEmulatorBQClient(ctx, t, testSMBQProjectID, clientOptions)
+		verifyClient := newEmulatorBQClient(ctx, t, testSMBQProjectID, clientConnection.ClientOptions)
 		defer verifyClient.Close()
 
 		table := verifyClient.Dataset(testSMBQDatasetID).Table(testSMBQTableID)

@@ -2,23 +2,7 @@ package servicemanager
 
 import (
 	"context"
-	"time"
 )
-
-// --- Generic Pub/Sub Configuration Structs ---
-
-// MessagingTopicConfigToUpdate defines a generic set of attributes for updating a topic.
-type MessagingTopicConfigToUpdate struct {
-	Labels map[string]string
-}
-
-// MessagingSubscriptionConfigToUpdate defines a generic set of attributes for updating a subscription.
-type MessagingSubscriptionConfigToUpdate struct {
-	AckDeadline       time.Duration
-	RetentionDuration time.Duration
-	RetryPolicy       *RetryPolicySpec // Assumes RetryPolicySpec uses time.Duration
-	Labels            map[string]string
-}
 
 // --- Pub/Sub Client Abstraction Interfaces ---
 
@@ -27,7 +11,7 @@ type MessagingSubscriptionConfigToUpdate struct {
 type MessagingTopic interface {
 	ID() string
 	Exists(ctx context.Context) (bool, error)
-	Update(ctx context.Context, cfg MessagingTopicConfigToUpdate) (*MessagingTopicConfig, error)
+	Update(ctx context.Context, cfg MessagingTopicConfig) (*MessagingTopicConfig, error)
 	Delete(ctx context.Context) error
 }
 
@@ -36,7 +20,7 @@ type MessagingTopic interface {
 type MessagingSubscription interface {
 	ID() string
 	Exists(ctx context.Context) (bool, error)
-	Update(ctx context.Context, cfg MessagingSubscriptionConfigToUpdate) (*MessagingSubscriptionConfig, error)
+	Update(ctx context.Context, cfg MessagingSubscriptionConfig) (*MessagingSubscriptionConfig, error)
 	Delete(ctx context.Context) error
 }
 
@@ -50,4 +34,8 @@ type MessagingClient interface {
 	// CreateSubscription already correctly uses our generic MessagingSubscriptionConfig spec.
 	CreateSubscription(ctx context.Context, subSpec MessagingSubscriptionConfig) (MessagingSubscription, error)
 	Close() error
+	// Validate checks if the resource configuration is valid for the specific implementation.
+	Validate(resources ResourcesSpec) error
+	// Check if we need to be able to access this generally or only in specific adapters
+	//Config(ctx context.Context) (*MessagingSubscriptionConfig, error)
 }

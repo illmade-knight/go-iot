@@ -3,10 +3,8 @@ package servicemanager
 import (
 	"context"
 	"fmt"
-	"strings"
-	"time"
-
 	"github.com/rs/zerolog"
+	"strings"
 )
 
 // --- PubSub Manager ---
@@ -47,6 +45,15 @@ func (m *MessagingManager) Setup(ctx context.Context, cfg *TopLevelConfig, envir
 	}
 	m.logger.Info().Str("project_id", projectID).Str("environment", environment).Msg("Starting Pub/Sub setup")
 
+	// FIX: Add a validation step before proceeding.
+	m.logger.Info().Msg("Validating resource configuration...")
+	if err := m.client.Validate(cfg.Resources); err != nil {
+		// The validation error is returned directly to the user.
+		m.logger.Error().Err(err).Msg("Resource configuration failed validation")
+		return err
+	}
+	m.logger.Info().Msg("Resource configuration is valid")
+
 	if err := m.setupTopics(ctx, cfg.Resources.MessagingTopics); err != nil {
 		return err
 	}
@@ -74,14 +81,13 @@ func (m *MessagingManager) setupTopics(ctx context.Context, topicsToCreate []Mes
 		}
 		if exists {
 			m.logger.Info().Str("topic_id", topicSpec.Name).Msg("Topic already exists, ensuring configuration is in sync")
-			// CORRECTED LOGIC: Always attempt to sync the labels to match the config.
-			updateCfg := MessagingTopicConfigToUpdate{
+			updateCfg := MessagingTopicConfig{
 				Labels: topicSpec.Labels,
 			}
+			// *** FIX: Return the error if the update fails ***
 			if _, updateErr := topic.Update(ctx, updateCfg); updateErr != nil {
-				// Note: GCP returns an error if you try to "update" with the exact same labels.
-				// This is generally safe to ignore, but real production code might inspect the error more closely.
-				m.logger.Warn().Err(updateErr).Str("topic_id", topicSpec.Name).Msg("Failed to update topic configuration")
+				// The underlying update call is failing. We must treat this as a fatal error.
+				return fmt.Errorf("failed to update topic configuration for '%s': %w", topicSpec.Name, updateErr)
 			}
 		} else {
 			m.logger.Info().Str("topic_id", topicSpec.Name).Msg("Creating topic...")
@@ -119,14 +125,15 @@ func (m *MessagingManager) setupSubscriptions(ctx context.Context, subsToCreate 
 
 		if exists {
 			m.logger.Info().Str("subscription_id", subSpec.Name).Msg("Subscription already exists, ensuring configuration")
-			updateCfg := MessagingSubscriptionConfigToUpdate{
-				AckDeadline:       time.Duration(subSpec.AckDeadlineSeconds) * time.Second,
-				Labels:            subSpec.Labels,
-				RetentionDuration: time.Duration(subSpec.MessageRetention),
-				RetryPolicy:       subSpec.RetryPolicy,
+			updateCfg := MessagingSubscriptionConfig{
+				AckDeadlineSeconds: subSpec.AckDeadlineSeconds,
+				Labels:             subSpec.Labels,
+				MessageRetention:   subSpec.MessageRetention,
+				RetryPolicy:        subSpec.RetryPolicy,
 			}
+			// *** FIX: Return the error if the update fails ***
 			if _, updateErr := sub.Update(ctx, updateCfg); updateErr != nil {
-				m.logger.Warn().Err(updateErr).Str("subscription_id", subSpec.Name).Msg("Failed to update subscription")
+				return fmt.Errorf("failed to update subscription '%s': %w", subSpec.Name, updateErr)
 			}
 		} else {
 			m.logger.Info().Str("subscription_id", subSpec.Name).Str("topic_id", subSpec.Topic).Msg("Creating subscription...")

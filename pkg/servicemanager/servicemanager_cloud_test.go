@@ -1,9 +1,10 @@
-//go:build cloudintegration
+//go:build integration
 
 package servicemanager_test
 
 import (
 	"context"
+	"github.com/illmade-knight/go-iot/pkg/helpers/emulators"
 	"os"
 	"testing"
 	"time"
@@ -63,15 +64,19 @@ func TestServiceManager_Integration_CloudProject(t *testing.T) {
 
 	// --- 2. Create adapters and sub-managers ---
 	gcsAdapter := servicemanager.NewGCSClientAdapter(realGCSClient)
-	psAdapter := servicemanager.NewGoogleMessagingClientAdapter(realPSClient)
-	mockBQClient := &servicemanager.MockBQClient{} // BQ is not under test
+	psAdapter := servicemanager.MessagingClientFromPubsubClient(realPSClient)
 
-	// Create the MessagingManager that will be injected
-	psManager, err := servicemanager.NewMessagingManager(psAdapter, logger)
-	require.NoError(t, err)
+	dt := map[string]string{}
+	sm := map[string]interface{}{}
+	bqConnection := emulators.SetupBigQueryEmulator(t, ctx, emulators.GetDefaultBigQueryConfig(projectID, dt, sm))
+
+	bqGoogleClient := newEmulatorBQClient(ctx, t, projectID, bqConnection.ClientOptions)
+	bqClientAdapter := servicemanager.NewBigQueryClientAdapter(bqGoogleClient)
+	require.NotNil(t, bqClientAdapter, "Manager BQ client adapter should not be nil")
 
 	// --- 3. Create ServiceManager using the corrected constructor ---
-	manager, err := servicemanager.NewServiceManagerFromSubManagers(psManager, gcsAdapter, mockBQClient, servicesDef, logger)
+
+	manager, err := servicemanager.NewServiceManagerFromClients(psAdapter, gcsAdapter, bqClientAdapter, servicesDef, sm, logger)
 	require.NoError(t, err)
 
 	// Teardown is deferred to ensure resources are cleaned up even if tests fail.

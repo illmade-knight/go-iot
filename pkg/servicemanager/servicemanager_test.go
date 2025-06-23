@@ -102,6 +102,8 @@ func TestServiceManager_SetupAll(t *testing.T) {
 		require.NoError(t, err)
 
 		// Messaging expectations
+		// *** FIX: Added missing mock expectation for the Validate() call. ***
+		mockMsgClient.On("Validate", mock.AnythingOfType("servicemanager.ResourcesSpec")).Return(nil)
 		mockTopic := new(MockMessagingTopic)
 		mockMsgClient.On("Topic", "topic1").Return(mockTopic)
 		mockTopic.On("Exists", mock.Anything).Return(false, nil)
@@ -170,8 +172,6 @@ func TestServiceManager_TeardownAll(t *testing.T) {
 		// Storage expectations
 		mockBucket := new(MockBucketHandle)
 		mockStoreClient.On("Bucket", "bucket1").Return(mockBucket)
-		// FIX: Added missing mock expectation for the Attrs() call.
-		// The teardown logic checks for existence before deleting.
 		mockBucket.On("Attrs", mock.Anything).Return(&servicemanager.BucketAttributes{}, nil)
 		mockBucket.On("Delete", mock.Anything).Return(nil)
 
@@ -212,6 +212,8 @@ func TestServiceManager_SetupDataflow(t *testing.T) {
 		require.NoError(t, err)
 
 		// Expectations for service-a resources ONLY
+		// *** FIX: Added missing mock expectation for the Validate() call. ***
+		mockMsgClient.On("Validate", mock.AnythingOfType("servicemanager.ResourcesSpec")).Return(nil)
 		mockTopic := new(MockMessagingTopic)
 		mockMsgClient.On("Topic", "topic1").Return(mockTopic)
 		mockTopic.On("Exists", mock.Anything).Return(false, nil)
@@ -253,6 +255,9 @@ func TestServiceManager_SetupDataflow(t *testing.T) {
 		servicesDef, err := servicemanager.NewInMemoryServicesDefinition(testCfg)
 		require.NoError(t, err)
 
+		// *** FIX: Added missing mock expectation for the Validate() call. ***
+		mockMsgClient.On("Validate", mock.AnythingOfType("servicemanager.ResourcesSpec")).Return(nil)
+
 		// Expectations for service-b (BigQuery)
 		mockDataset := new(MockBQDataset)
 		mockBqClient.On("Project").Return("test-project")
@@ -280,7 +285,7 @@ func TestServiceManager_SetupDataflow(t *testing.T) {
 		mockBqClient.AssertExpectations(t)
 		mockDataset.AssertExpectations(t)
 		mockTable.AssertExpectations(t)
-		mockMsgClient.AssertNotCalled(t, "Topic", mock.Anything)
+		mockMsgClient.AssertExpectations(t) // Assert Validate was called
 		mockStoreClient.AssertNotCalled(t, "Bucket", mock.Anything)
 	})
 }
@@ -308,7 +313,6 @@ func TestServiceManager_TeardownDataflow(t *testing.T) {
 		// Storage teardown expectations
 		mockBucket := new(MockBucketHandle)
 		mockStoreClient.On("Bucket", "bucket1").Return(mockBucket)
-		// FIX: Added missing mock expectation for the Attrs() call.
 		mockBucket.On("Attrs", mock.Anything).Return(&servicemanager.BucketAttributes{}, nil)
 		mockBucket.On("Delete", mock.Anything).Return(nil)
 

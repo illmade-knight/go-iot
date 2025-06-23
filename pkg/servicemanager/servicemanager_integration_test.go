@@ -46,27 +46,25 @@ func TestServiceManager_Integration_Emulators(t *testing.T) {
 	}
 
 	// --- 1. Setup Emulators and Clients using a helper package ---
-	gcsEmulatorClient, gcsClose := emulators.SetupGCSEmulator(t, ctx, emulators.GetDefaultGCSConfig(projectID, bucketName))
-	defer gcsClose()
+	gcsConfig := emulators.GetDefaultGCSConfig(testProjectID, bucketName)
+	connection := emulators.SetupGCSEmulator(t, ctx, gcsConfig)
+	gcsClient := emulators.GetStorageClient(t, ctx, gcsConfig, connection.ClientOptions)
 
-	psOptions, psClose := emulators.SetupPubSubEmulator(t, ctx, emulators.GetDefaultPubsubConfig(projectID, nil))
-	defer psClose()
+	psConnection := emulators.SetupPubsubEmulator(t, ctx, emulators.GetDefaultPubsubConfig(projectID, nil))
 
-	psEmulatorClient, err := pubsub.NewClient(ctx, projectID, psOptions...)
+	psEmulatorClient, err := pubsub.NewClient(ctx, projectID, psConnection.ClientOptions...)
 	require.NoError(t, err)
 	defer psEmulatorClient.Close()
 
 	dt := map[string]string{}
 	sm := map[string]interface{}{}
-	bqOptions, bqClose := emulators.SetupBigQueryEmulator(t, ctx, emulators.GetDefaultBigQueryConfig(projectID, dt, sm))
-	defer bqClose()
+	bqConnection := emulators.SetupBigQueryEmulator(t, ctx, emulators.GetDefaultBigQueryConfig(projectID, dt, sm))
 
 	// Wrap clients in our adapters
-	gcsAdapter := servicemanager.NewGCSClientAdapter(gcsEmulatorClient)
-	psAdapter := servicemanager.NewGoogleMessagingClientAdapter(psEmulatorClient)
+	gcsAdapter := servicemanager.NewGCSClientAdapter(gcsClient)
+	psAdapter := servicemanager.MessagingClientFromPubsubClient(psEmulatorClient)
 
-	bqGoogleClient := newEmulatorBQClient(ctx, t, projectID, bqOptions)
-
+	bqGoogleClient := newEmulatorBQClient(ctx, t, projectID, bqConnection.ClientOptions)
 	bqClientAdapter := servicemanager.NewBigQueryClientAdapter(bqGoogleClient)
 	require.NotNil(t, bqClientAdapter, "Manager BQ client adapter should not be nil")
 
@@ -85,7 +83,7 @@ func TestServiceManager_Integration_Emulators(t *testing.T) {
 		require.NoError(t, err)
 
 		// Verify GCS Bucket
-		gcsAttrs, err := gcsEmulatorClient.Bucket(bucketName).Attrs(ctx)
+		gcsAttrs, err := gcsClient.Bucket(bucketName).Attrs(ctx)
 		require.NoError(t, err, "GCS bucket should exist after setup")
 		assert.Equal(t, bucketName, gcsAttrs.Name, "GCS bucket versioning should be enabled")
 
@@ -112,7 +110,7 @@ func TestServiceManager_Integration_Emulators(t *testing.T) {
 		require.NoError(t, err)
 
 		// Verify GCS Bucket is gone
-		_, err = gcsEmulatorClient.Bucket(bucketName).Attrs(ctx)
+		_, err = gcsClient.Bucket(bucketName).Attrs(ctx)
 		assert.ErrorIs(t, err, storage.ErrBucketNotExist, "GCS bucket should NOT exist after teardown")
 
 		// Verify Pub/Sub resources are gone

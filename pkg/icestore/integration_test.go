@@ -59,14 +59,13 @@ func TestIceStorageService_Integration(t *testing.T) {
 
 	pubsubConfig := emulators.GetDefaultPubsubConfig(testProjectID, map[string]string{testTopicID: testSubscriptionID})
 
-	pubsubClientOptions, pubsubCleanup := emulators.SetupPubSubEmulator(t, ctx, pubsubConfig)
-	defer pubsubCleanup()
+	pubsubConnection := emulators.SetupPubsubEmulator(t, ctx, pubsubConfig)
 
 	logger.Info().Msg("Setting up GCS emulator...")
 
 	gcsConfig := emulators.GetDefaultGCSConfig(testProjectID, testBucketName)
-	gcsClient, gcsCleanup := emulators.SetupGCSEmulator(t, ctx, gcsConfig)
-	defer gcsCleanup()
+	connection := emulators.SetupGCSEmulator(t, ctx, gcsConfig)
+	gcsClient := emulators.GetStorageClient(t, ctx, gcsConfig, connection.ClientOptions)
 
 	// --- Test Cases Definition ---
 	testCases := []struct {
@@ -147,7 +146,7 @@ func TestIceStorageService_Integration(t *testing.T) {
 			consumerCfg := &consumers.GooglePubsubConsumerConfig{
 				ProjectID: testProjectID, SubscriptionID: testSubscriptionID, MaxOutstandingMessages: 10, NumGoroutines: 2,
 			}
-			consumer, err := consumers.NewGooglePubsubConsumer(testCtx, consumerCfg, pubsubClientOptions, logger)
+			consumer, err := consumers.NewGooglePubsubConsumer(testCtx, consumerCfg, pubsubConnection.ClientOptions, logger)
 			require.NoError(t, err)
 
 			batcher, err := icestore.NewGCSBatchProcessor(
@@ -172,7 +171,7 @@ func TestIceStorageService_Integration(t *testing.T) {
 
 			// --- Publish Test Messages ---
 			if len(tc.messagesToPublish) > 0 {
-				publisherClient, err := pubsub.NewClient(testCtx, testProjectID, pubsubClientOptions...)
+				publisherClient, err := pubsub.NewClient(testCtx, testProjectID, pubsubConnection.ClientOptions...)
 				require.NoError(t, err)
 				topic := publisherClient.Topic(testTopicID)
 
