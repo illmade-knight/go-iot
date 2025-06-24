@@ -3,7 +3,7 @@ package device
 import (
 	"context"
 	"errors"
-	"github.com/illmade-knight/go-iot/pkg/helpers/emulators"
+	"github.com/illmade-knight/go-iot/helpers/emulators"
 	"io"
 	"testing"
 	"time"
@@ -135,7 +135,7 @@ func TestGoogleDeviceMetadataFetcher_Integration_TableDriven(t *testing.T) {
 				ProjectID:      testProjectID,
 				CollectionName: testCollectionName,
 			}
-			deviceFetcher, err := NewGoogleDeviceMetadataFetcher(ctx, firestoreClient, fetcherConfig, logger) // Pass firestoreClient directly
+			deviceFetcher, err := NewGoogleDeviceMetadataFetcher(firestoreClient, fetcherConfig, logger) // Pass firestoreClient directly
 			require.NoError(t, err, "Failed to create GoogleDeviceMetadataFetcher for %s", tc.name)
 			// No defer deviceFetcher.Close() needed here as the client is closed by the parent t.Cleanup.
 

@@ -14,7 +14,7 @@ this enables easy local setup of gcloud resources prior to microservice deployme
 
 ### Helpers
 
-Tools such as [loadgen](helpers/loadgen) for generating test load for microservices go here.
+Tools such as [loadgen](../helpers/loadgen) for generating test load for microservices go here.
 
 ### Device Specific
 

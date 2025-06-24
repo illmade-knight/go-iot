@@ -91,7 +91,7 @@ func TestNewGoogleDeviceMetadataFetcher(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			fetcher, err := NewGoogleDeviceMetadataFetcher(tt.args.ctx, tt.args.client, tt.args.cfg, tt.args.logger)
+			fetcher, err := NewGoogleDeviceMetadataFetcher(tt.args.client, tt.args.cfg, tt.args.logger)
 
 			if tt.wantErr {
 				require.Error(t, err)

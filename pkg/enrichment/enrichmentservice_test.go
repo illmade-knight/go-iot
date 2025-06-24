@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"github.com/illmade-knight/go-iot/helpers/emulators"
 	"github.com/illmade-knight/go-iot/pkg/types"
 	"os"
 	"sync"
@@ -12,7 +13,6 @@ import (
 	"time"
 
 	"github.com/illmade-knight/go-iot/pkg/device"
-	"github.com/illmade-knight/go-iot/pkg/helpers/emulators"
 	"github.com/illmade-knight/go-iot/pkg/messagepipeline"
 
 	"github.com/rs/zerolog"

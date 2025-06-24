@@ -8,7 +8,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"github.com/illmade-knight/go-iot/pkg/helpers/emulators"
+	emulators2 "github.com/illmade-knight/go-iot/helpers/emulators"
 	"github.com/illmade-knight/go-iot/pkg/types"
 	"io"
 	"os"
@@ -53,16 +53,16 @@ func TestBigQueryService_Integration_FullFlow(t *testing.T) {
 	pubsubCtx, pubsubCancel := context.WithTimeout(ctx, time.Second*20)
 	defer pubsubCancel()
 
-	pubsubConfig := emulators.GetDefaultPubsubConfig(testProjectID, map[string]string{testInputTopicID: testInputSubscriptionID})
+	pubsubConfig := emulators2.GetDefaultPubsubConfig(testProjectID, map[string]string{testInputTopicID: testInputSubscriptionID})
 
-	connection := emulators.SetupPubsubEmulator(t, pubsubCtx, pubsubConfig)
+	connection := emulators2.SetupPubsubEmulator(t, pubsubCtx, pubsubConfig)
 
 	bigqueryCtx, bigqueryCancel := context.WithTimeout(ctx, time.Second*20)
 	defer bigqueryCancel()
 
-	bigqueryCfg := emulators.GetDefaultBigQueryConfig(testProjectID, map[string]string{testBigQueryDatasetID: testBigQueryTableID},
+	bigqueryCfg := emulators2.GetDefaultBigQueryConfig(testProjectID, map[string]string{testBigQueryDatasetID: testBigQueryTableID},
 		map[string]interface{}{testBigQueryTableID: types.GardenMonitorReadings{}})
-	bigqueryConnection := emulators.SetupBigQueryEmulator(t, bigqueryCtx, bigqueryCfg)
+	bigqueryConnection := emulators2.SetupBigQueryEmulator(t, bigqueryCtx, bigqueryCfg)
 
 	// --- Configuration setup (Unchanged) ---
 	var logBuf bytes.Buffer

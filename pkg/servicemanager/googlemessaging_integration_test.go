@@ -5,6 +5,7 @@ package servicemanager_test
 import (
 	"context"
 	"fmt"
+	"github.com/illmade-knight/go-iot/helpers/emulators"
 	"io"
 	"os"
 	"path/filepath"
@@ -12,7 +13,6 @@ import (
 	"time"
 
 	"cloud.google.com/go/pubsub"
-	"github.com/illmade-knight/go-iot/pkg/helpers/emulators"
 	"github.com/illmade-knight/go-iot/pkg/servicemanager"
 	"github.com/rs/zerolog"
 	"github.com/stretchr/testify/assert"

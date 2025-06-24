@@ -43,7 +43,7 @@ type GoogleDeviceMetadataFetcher struct {
 
 // NewGoogleDeviceMetadataFetcher creates a new fetcher that uses Firestore.
 // It now takes an existing *firestore.Client instance, allowing for dependency injection.
-func NewGoogleDeviceMetadataFetcher(ctx context.Context, client *firestore.Client, cfg *FirestoreFetcherConfig, logger zerolog.Logger) (*GoogleDeviceMetadataFetcher, error) { // Signature changed
+func NewGoogleDeviceMetadataFetcher(client *firestore.Client, cfg *FirestoreFetcherConfig, logger zerolog.Logger) (*GoogleDeviceMetadataFetcher, error) { // Signature changed
 	if client == nil {
 		return nil, errors.New("firestore client cannot be nil")
 	}

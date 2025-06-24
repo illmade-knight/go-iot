@@ -4,6 +4,7 @@ package servicemanager_test
 
 import (
 	"context"
+	emulators2 "github.com/illmade-knight/go-iot/helpers/emulators"
 	"io"
 	"testing"
 	"time"
@@ -11,7 +12,6 @@ import (
 	"cloud.google.com/go/pubsub"
 	"cloud.google.com/go/storage"
 	"github.com/google/uuid"
-	"github.com/illmade-knight/go-iot/pkg/helpers/emulators"
 	"github.com/illmade-knight/go-iot/pkg/servicemanager"
 	"github.com/rs/zerolog"
 	"github.com/stretchr/testify/assert"
@@ -46,11 +46,11 @@ func TestServiceManager_Integration_Emulators(t *testing.T) {
 	}
 
 	// --- 1. Setup Emulators and Clients using a helper package ---
-	gcsConfig := emulators.GetDefaultGCSConfig(testProjectID, bucketName)
-	connection := emulators.SetupGCSEmulator(t, ctx, gcsConfig)
-	gcsClient := emulators.GetStorageClient(t, ctx, gcsConfig, connection.ClientOptions)
+	gcsConfig := emulators2.GetDefaultGCSConfig(testProjectID, bucketName)
+	connection := emulators2.SetupGCSEmulator(t, ctx, gcsConfig)
+	gcsClient := emulators2.GetStorageClient(t, ctx, gcsConfig, connection.ClientOptions)
 
-	psConnection := emulators.SetupPubsubEmulator(t, ctx, emulators.GetDefaultPubsubConfig(projectID, nil))
+	psConnection := emulators2.SetupPubsubEmulator(t, ctx, emulators2.GetDefaultPubsubConfig(projectID, nil))
 
 	psEmulatorClient, err := pubsub.NewClient(ctx, projectID, psConnection.ClientOptions...)
 	require.NoError(t, err)
@@ -58,7 +58,7 @@ func TestServiceManager_Integration_Emulators(t *testing.T) {
 
 	dt := map[string]string{}
 	sm := map[string]interface{}{}
-	bqConnection := emulators.SetupBigQueryEmulator(t, ctx, emulators.GetDefaultBigQueryConfig(projectID, dt, sm))
+	bqConnection := emulators2.SetupBigQueryEmulator(t, ctx, emulators2.GetDefaultBigQueryConfig(projectID, dt, sm))
 
 	// Wrap clients in our adapters
 	gcsAdapter := servicemanager.NewGCSClientAdapter(gcsClient)

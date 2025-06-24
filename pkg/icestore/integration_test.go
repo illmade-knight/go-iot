@@ -10,7 +10,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"github.com/illmade-knight/go-iot/pkg/helpers/emulators"
+	emulators2 "github.com/illmade-knight/go-iot/helpers/emulators"
 	"os"
 	"testing"
 	"time"
@@ -57,15 +57,15 @@ func TestIceStorageService_Integration(t *testing.T) {
 
 	logger.Info().Msg("Setting up Pub/Sub emulator...")
 
-	pubsubConfig := emulators.GetDefaultPubsubConfig(testProjectID, map[string]string{testTopicID: testSubscriptionID})
+	pubsubConfig := emulators2.GetDefaultPubsubConfig(testProjectID, map[string]string{testTopicID: testSubscriptionID})
 
-	pubsubConnection := emulators.SetupPubsubEmulator(t, ctx, pubsubConfig)
+	pubsubConnection := emulators2.SetupPubsubEmulator(t, ctx, pubsubConfig)
 
 	logger.Info().Msg("Setting up GCS emulator...")
 
-	gcsConfig := emulators.GetDefaultGCSConfig(testProjectID, testBucketName)
-	connection := emulators.SetupGCSEmulator(t, ctx, gcsConfig)
-	gcsClient := emulators.GetStorageClient(t, ctx, gcsConfig, connection.ClientOptions)
+	gcsConfig := emulators2.GetDefaultGCSConfig(testProjectID, testBucketName)
+	connection := emulators2.SetupGCSEmulator(t, ctx, gcsConfig)
+	gcsClient := emulators2.GetStorageClient(t, ctx, gcsConfig, connection.ClientOptions)
 
 	// --- Test Cases Definition ---
 	testCases := []struct {

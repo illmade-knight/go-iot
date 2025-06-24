@@ -4,7 +4,7 @@ package servicemanager_test
 
 import (
 	"context"
-	"github.com/illmade-knight/go-iot/pkg/helpers/emulators"
+	"github.com/illmade-knight/go-iot/helpers/emulators"
 	"os"
 	"testing"
 	"time"

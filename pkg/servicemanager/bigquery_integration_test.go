@@ -6,7 +6,7 @@ import (
 	"context"
 	"fmt"
 	telemetry "github.com/illmade-knight/go-iot/gen/go/protos/telemetry"
-	"github.com/illmade-knight/go-iot/pkg/helpers/emulators"
+	"github.com/illmade-knight/go-iot/helpers/emulators"
 	"github.com/illmade-knight/go-iot/pkg/servicemanager"
 	"google.golang.org/api/option"
 	"os"

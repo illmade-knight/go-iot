@@ -7,7 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"github.com/illmade-knight/go-iot/pkg/helpers/emulators"
+	emulators2 "github.com/illmade-knight/go-iot/helpers/emulators"
 	"github.com/illmade-knight/go-iot/pkg/types"
 	"strings"
 	"sync"
@@ -45,11 +45,11 @@ func TestIngestionService_Integration_MQTT_To_PubSub(t *testing.T) {
 	defer cancel()
 
 	// --- 1. Setup Emulators ---
-	mosquitoConfig := emulators.GetDefaultMqttImageContainer()
-	mqttConnection := emulators.SetupMosquittoContainer(t, ctx, mosquitoConfig)
+	mosquitoConfig := emulators2.GetDefaultMqttImageContainer()
+	mqttConnection := emulators2.SetupMosquittoContainer(t, ctx, mosquitoConfig)
 
-	pubsubConfig := emulators.GetDefaultPubsubConfig(testProjectID, map[string]string{testPubsubTopicID: testPubsubSubscriptionID})
-	pubsubConnection := emulators.SetupPubsubEmulator(t, ctx, pubsubConfig)
+	pubsubConfig := emulators2.GetDefaultPubsubConfig(testProjectID, map[string]string{testPubsubTopicID: testPubsubSubscriptionID})
+	pubsubConnection := emulators2.SetupPubsubEmulator(t, ctx, pubsubConfig)
 
 	// --- 3. Initialize IngestionService Components ---
 	serviceLogger := testLogger.With().Str("component", "IngestionService").Logger()
@@ -102,7 +102,7 @@ func TestIngestionService_Integration_MQTT_To_PubSub(t *testing.T) {
 	time.Sleep(2 * time.Second) // Give a moment for MQTT subscriptions to establish
 
 	// --- 5. Setup Test MQTT Publisher ---
-	mqttTestPubClient, err := emulators.CreateTestMqttPublisher(mqttConnection.EmulatorAddress, testMqttPublisherPrefix+"main")
+	mqttTestPubClient, err := emulators2.CreateTestMqttPublisher(mqttConnection.EmulatorAddress, testMqttPublisherPrefix+"main")
 	require.NoError(t, err, "Failed to create test MQTT publisher")
 	defer mqttTestPubClient.Disconnect(250)
 
