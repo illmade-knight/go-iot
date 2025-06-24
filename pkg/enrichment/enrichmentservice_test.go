@@ -178,12 +178,18 @@ func TestEnrichmentService_Integration(t *testing.T) {
 
 	// --- Instantiate Pipeline Components ---
 
+	// Shared client setup
+	// The producer needs its own client instance, as its lifecycle is managed by the pipeline.
+	sharedClient, err := pubsub.NewClient(ctx, projectID, clientOptions...)
+	require.NoError(t, err)
+	defer sharedClient.Close()
+
 	// Consumer: Reads from the input topic.
 	consumerCfg := &messagepipeline.GooglePubsubConsumerConfig{
 		ProjectID:      projectID,
 		SubscriptionID: inputSubID,
 	}
-	consumer, err := messagepipeline.NewGooglePubsubConsumer(ctx, consumerCfg, clientOptions, logger)
+	consumer, err := messagepipeline.NewGooglePubsubConsumer(consumerCfg, sharedClient, logger)
 	require.NoError(t, err)
 
 	// Producer: Writes to the output topic.
@@ -192,12 +198,9 @@ func TestEnrichmentService_Integration(t *testing.T) {
 		TopicID:    outputTopicID,
 		BatchDelay: 20 * time.Millisecond, // Use a short delay for testing.
 	}
-	// The producer needs its own client instance, as its lifecycle is managed by the pipeline.
-	producerClient, err := pubsub.NewClient(ctx, projectID, clientOptions...)
-	require.NoError(t, err)
-	defer producerClient.Close()
+
 	// NOTE: The generic type for the producer is now our test-specific, data-only struct.
-	producer, err := messagepipeline.NewGooglePubsubProducer[TestEnrichedMessage](ctx, producerClient, producerCfg, logger)
+	producer, err := messagepipeline.NewGooglePubsubProducer[TestEnrichedMessage](sharedClient, producerCfg, logger)
 	require.NoError(t, err)
 
 	// Transformer: Use the corrected enricher function.

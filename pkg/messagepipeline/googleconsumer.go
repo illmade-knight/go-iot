@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"github.com/illmade-knight/go-iot/pkg/types"
 	"github.com/rs/zerolog"
-	"google.golang.org/api/option"
 	"os"
 	"sync"
 	"time"
@@ -54,18 +53,14 @@ type GooglePubsubConsumer struct {
 	doneChan           chan struct{}
 }
 
-func NewGooglePubsubConsumer(ctx context.Context, cfg *GooglePubsubConsumerConfig, opts []option.ClientOption, logger zerolog.Logger) (*GooglePubsubConsumer, error) {
-	if opts == nil {
-		opts = []option.ClientOption{}
-	}
-
-	client, err := pubsub.NewClient(ctx, cfg.ProjectID, opts...)
-	if err != nil {
-		return nil, fmt.Errorf("pubsub.NewClient for subscription %s: %w", cfg.SubscriptionID, err)
-	}
+// NewGooglePubsubConsumer changed so pubsub client can be shared by consumer and producer
+func NewGooglePubsubConsumer(cfg *GooglePubsubConsumerConfig, client *pubsub.Client, logger zerolog.Logger) (*GooglePubsubConsumer, error) {
 	sub := client.Subscription(cfg.SubscriptionID)
 
-	e, err := sub.Exists(ctx)
+	// the context just makes sure we don't hang endlessly looking for subscriptions
+	subContext, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+	defer cancel()
+	e, err := sub.Exists(subContext)
 	if !e || err != nil {
 		return nil, fmt.Errorf("subscription %s does not exist: %w", cfg.SubscriptionID, err)
 	}

@@ -71,7 +71,6 @@ type GooglePubsubProducer[T any] struct {
 // NewGooglePubsubProducer creates a new GooglePubsubProducer.
 // It takes an existing *pubsub.Client instance, allowing for dependency injection.
 func NewGooglePubsubProducer[T any](
-	ctx context.Context, // This ctx is for client creation, internal ops use shutdownCtx
 	client *pubsub.Client,
 	cfg *GooglePubsubProducerConfig,
 	logger zerolog.Logger,
@@ -82,8 +81,10 @@ func NewGooglePubsubProducer[T any](
 
 	topic := client.Topic(cfg.TopicID)
 
+	topicCtx, topicCancel := context.WithTimeout(context.Background(), time.Second*10)
+	defer topicCancel()
 	// Check if the topic exists.
-	exists, err := topic.Exists(ctx) // Use passed ctx for initial check
+	exists, err := topic.Exists(topicCtx) // Use passed ctx for initial check
 	if err != nil {
 		return nil, fmt.Errorf("failed to check existence of topic %s: %w", cfg.TopicID, err)
 	}

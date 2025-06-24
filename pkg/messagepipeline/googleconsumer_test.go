@@ -104,7 +104,11 @@ func TestNewGooglePubsubConsumer_Success(t *testing.T) {
 		SubscriptionID: subID,
 	}
 
-	consumer, err := NewGooglePubsubConsumer(context.Background(), cfg, opts, zerolog.Nop())
+	ctx := context.Background()
+	client, err := pubsub.NewClient(ctx, projectID, opts...)
+	require.NoError(t, err)
+
+	consumer, err := NewGooglePubsubConsumer(cfg, client, zerolog.Nop())
 	require.NoError(t, err)
 	require.NotNil(t, consumer)
 
@@ -125,7 +129,11 @@ func TestNewGooglePubsubConsumer_SubscriptionNotFound(t *testing.T) {
 		SubscriptionID: "non-existent-sub",
 	}
 
-	consumer, err := NewGooglePubsubConsumer(context.Background(), badCfg, opts, zerolog.Nop())
+	ctx := context.Background()
+	client, err := pubsub.NewClient(ctx, projectID, opts...)
+	require.NoError(t, err)
+
+	consumer, err := NewGooglePubsubConsumer(badCfg, client, zerolog.Nop())
 	require.Error(t, err)
 	assert.Nil(t, consumer)
 	assert.Contains(t, err.Error(), "does not exist")
@@ -150,7 +158,7 @@ func TestGooglePubsubConsumer_Lifecycle_And_MessageReception(t *testing.T) {
 	require.NoError(t, err)
 	defer client.Close()
 
-	consumer, err := NewGooglePubsubConsumer(context.Background(), cfg, opts, zerolog.Nop())
+	consumer, err := NewGooglePubsubConsumer(cfg, client, zerolog.Nop())
 	require.NoError(t, err)
 	require.NotNil(t, consumer)
 

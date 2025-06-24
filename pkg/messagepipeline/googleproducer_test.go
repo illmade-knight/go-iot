@@ -163,7 +163,6 @@ func TestGooglePubsubProducer_Lifecycle_And_MessageProduction(t *testing.T) {
 			}
 
 			producer, err := messagepipeline.NewGooglePubsubProducer[TestPayload](
-				context.Background(),
 				pubsubClient,
 				producerConfig,
 				testLogger, // Use the active logger here
@@ -301,7 +300,7 @@ func TestGooglePubsubProducer_InitializationErrors(t *testing.T) {
 
 	t.Run("nil client", func(t *testing.T) {
 		cfg := &messagepipeline.GooglePubsubProducerConfig{ProjectID: projectID, TopicID: topicID}
-		producer, err := messagepipeline.NewGooglePubsubProducer[TestPayload](context.Background(), nil, cfg, logger)
+		producer, err := messagepipeline.NewGooglePubsubProducer[TestPayload](nil, cfg, logger)
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "pubsub client cannot be nil")
 		assert.Nil(t, producer)
@@ -309,7 +308,7 @@ func TestGooglePubsubProducer_InitializationErrors(t *testing.T) {
 
 	t.Run("non-existent topic", func(t *testing.T) {
 		cfg := &messagepipeline.GooglePubsubProducerConfig{ProjectID: projectID, TopicID: "non-existent-topic"}
-		producer, err := messagepipeline.NewGooglePubsubProducer[TestPayload](context.Background(), client, cfg, logger)
+		producer, err := messagepipeline.NewGooglePubsubProducer[TestPayload](client, cfg, logger)
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "topic non-existent-topic does not exist")
 		assert.Nil(t, producer)
@@ -336,7 +335,6 @@ func TestGooglePubsubProducer_ShutdownEnsuresFlush(t *testing.T) {
 	}
 
 	producer, err := messagepipeline.NewGooglePubsubProducer[TestPayload](
-		context.Background(),
 		pubsubClient,
 		producerConfig,
 		testLogger,
