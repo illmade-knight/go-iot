@@ -83,7 +83,7 @@ func SetupPubsubEmulator(t *testing.T, ctx context.Context, cfg PubsubConfig) Em
 
 	// CORRECTED: Use t.Cleanup to ensure the container is terminated after the test and all its sub-tests complete.
 	t.Cleanup(func() {
-		if err := container.Terminate(ctx); err != nil {
+		if err := container.Terminate(context.Background()); err != nil {
 			log.Warn().Err(err).Msg("Failed to terminate Pub/Sub emulator container")
 		}
 	})
@@ -150,7 +150,7 @@ func SetupFirestoreEmulator(t *testing.T, ctx context.Context, cfg FirestoreConf
 
 	// CORRECTED: Use t.Cleanup to ensure the container is terminated after the test and all its sub-tests complete.
 	t.Cleanup(func() {
-		if err := container.Terminate(ctx); err != nil {
+		if err := container.Terminate(context.Background()); err != nil {
 			log.Warn().Err(err).Msg("Failed to terminate Firestore emulator container")
 		}
 	})
@@ -162,7 +162,6 @@ func SetupFirestoreEmulator(t *testing.T, ctx context.Context, cfg FirestoreConf
 	emulatorHost := fmt.Sprintf("%s:%s", host, port.Port()) //
 
 	t.Logf("Firestore emulator container started, listening on: %s", emulatorHost)
-	// Removed t.Setenv("FIRESTORE_EMULATOR_HOST", emulatorHost) as discussed
 
 	clientOptions := getEmulatorOptions(emulatorHost)
 

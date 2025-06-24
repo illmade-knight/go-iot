@@ -78,7 +78,7 @@ func SetupGCSEmulator(t *testing.T, ctx context.Context, cfg GCSConfig) Emulator
 	opts := getEmulatorOptions(emulatorEndpoint)
 
 	t.Cleanup(func() {
-		require.NoError(t, container.Terminate(ctx))
+		require.NoError(t, container.Terminate(context.Background()))
 	})
 
 	return EmulatorConnectionInfo{

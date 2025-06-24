@@ -35,7 +35,7 @@ func SetupRedisContainer(t *testing.T, ctx context.Context, imageContainer Image
 	container, err := testcontainers.GenericContainer(ctx, testcontainers.GenericContainerRequest{ContainerRequest: req, Started: true})
 	require.NoError(t, err, "Failed to start Redis container")
 	t.Cleanup(func() {
-		require.NoError(t, container.Terminate(ctx))
+		require.NoError(t, container.Terminate(context.Background()))
 		t.Log("CLOUD E2E: Redis container terminated.")
 	})
 

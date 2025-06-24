@@ -60,7 +60,7 @@ func SetupBigQueryEmulator(t *testing.T, ctx context.Context, cfg BigQueryConfig
 	}
 	container, err := testcontainers.GenericContainer(ctx, testcontainers.GenericContainerRequest{ContainerRequest: req, Started: true})
 	require.NoError(t, err)
-	t.Cleanup(func() { require.NoError(t, container.Terminate(ctx)) })
+	t.Cleanup(func() { require.NoError(t, container.Terminate(context.Background())) })
 
 	host, err := container.Host(ctx)
 	require.NoError(t, err)
