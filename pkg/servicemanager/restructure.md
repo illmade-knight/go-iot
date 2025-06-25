@@ -65,5 +65,15 @@ maybe this is the key,
 the dataflow at the moment lists all the global resources including those used by ServiceA and ServiceB.
 but for service setup we want to see its resources by themselves.
 
+## Start
+
+OK lets start the restructure - 
+lets go through everything one file at a time - 
+can you show me each file refactor in full in the canvas and detail the changes in the chat. 
+Let's start at the top level with servicemanager. 
+After each files refactor I'll show you the existing unit test for that file and then we'll adapt it to the refactor. 
+Don't change any code not directly touched by the refactor - check this carefully - 
+the unit tests should help us verify this.
+
 
 

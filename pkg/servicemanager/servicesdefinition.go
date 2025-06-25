@@ -11,7 +11,7 @@ import (
 // service and resource configuration for the entire system.
 type ServicesDefinition interface {
 	GetTopLevelConfig() (*TopLevelConfig, error)
-	GetDataflow(name string) (*DataflowSpec, error)
+	GetDataflow(name string) (*ResourceGroup, error)
 	GetService(name string) (*ServiceSpec, error)
 	GetProjectID(environment string) (string, error)
 }
@@ -22,7 +22,7 @@ type ServicesDefinition interface {
 type YAMLServicesDefinition struct {
 	filePath      string
 	parsedConfig  *TopLevelConfig
-	dataflowIndex map[string]DataflowSpec
+	dataflowIndex map[string]ResourceGroup
 	serviceIndex  map[string]ServiceSpec
 }
 
@@ -51,10 +51,9 @@ func NewYAMLServicesDefinition(filePath string) (*YAMLServicesDefinition, error)
 // --- In-Memory Implementation ---
 
 // InMemoryServicesDefinition implements ServicesDefinition for an in-memory config struct.
-// This is useful for testing or for scenarios where the configuration is generated dynamically.
 type InMemoryServicesDefinition struct {
 	parsedConfig  *TopLevelConfig
-	dataflowIndex map[string]DataflowSpec
+	dataflowIndex map[string]ResourceGroup
 	serviceIndex  map[string]ServiceSpec
 }
 
@@ -75,9 +74,9 @@ func NewInMemoryServicesDefinition(config *TopLevelConfig) (*InMemoryServicesDef
 
 // --- Common Logic ---
 
-// buildIndexes is a shared helper to create lookup maps from a config struct for efficient access.
-func buildIndexes(config *TopLevelConfig) (map[string]DataflowSpec, map[string]ServiceSpec) {
-	dfIndex := make(map[string]DataflowSpec)
+// buildIndexes creates lookup maps from a config struct for efficient access.
+func buildIndexes(config *TopLevelConfig) (map[string]ResourceGroup, map[string]ServiceSpec) {
+	dfIndex := make(map[string]ResourceGroup)
 	for _, df := range config.Dataflows {
 		dfIndex[df.Name] = df
 	}
@@ -91,27 +90,21 @@ func buildIndexes(config *TopLevelConfig) (map[string]DataflowSpec, map[string]S
 
 // GetTopLevelConfig returns the entire parsed configuration struct.
 func (sd *YAMLServicesDefinition) GetTopLevelConfig() (*TopLevelConfig, error) {
-	if sd.parsedConfig == nil {
-		return nil, fmt.Errorf("services definition has not been loaded")
-	}
 	return sd.parsedConfig, nil
 }
 func (sd *InMemoryServicesDefinition) GetTopLevelConfig() (*TopLevelConfig, error) {
-	if sd.parsedConfig == nil {
-		return nil, fmt.Errorf("services definition has not been loaded")
-	}
 	return sd.parsedConfig, nil
 }
 
 // GetDataflow finds a dataflow by name using the pre-built index.
-func (sd *YAMLServicesDefinition) GetDataflow(name string) (*DataflowSpec, error) {
+func (sd *YAMLServicesDefinition) GetDataflow(name string) (*ResourceGroup, error) {
 	df, ok := sd.dataflowIndex[name]
 	if !ok {
 		return nil, fmt.Errorf("dataflow '%s' not found in services definition", name)
 	}
 	return &df, nil
 }
-func (sd *InMemoryServicesDefinition) GetDataflow(name string) (*DataflowSpec, error) {
+func (sd *InMemoryServicesDefinition) GetDataflow(name string) (*ResourceGroup, error) {
 	df, ok := sd.dataflowIndex[name]
 	if !ok {
 		return nil, fmt.Errorf("dataflow '%s' not found in services definition", name)

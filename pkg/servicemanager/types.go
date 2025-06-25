@@ -19,15 +19,24 @@ const (
 	LifecycleStrategyEphemeral LifecycleStrategy = "ephemeral"
 )
 
+// ResourceGroup defines a logical grouping of services that work together.
+type ResourceGroup struct {
+	Name         string           `yaml:"name"`
+	Description  string           `yaml:"description,omitempty"`
+	ServiceNames []string         `yaml:"service_names,omitempty"`
+	Lifecycle    *LifecyclePolicy `yaml:"lifecycle,omitempty"`
+	Resources    ResourcesSpec    `yaml:"resources"`
+}
+
 // TopLevelConfig is the root of the configuration structure.
 type TopLevelConfig struct {
+	ResourceGroup    `yaml:",inline"`
 	DefaultProjectID string                     `yaml:"default_project_id"`
 	DefaultLocation  string                     `yaml:"default_location"`
 	DefaultRegion    string                     `yaml:"default_region,omitempty"`
 	Environments     map[string]EnvironmentSpec `yaml:"environments"`
 	Services         []ServiceSpec              `yaml:"services"`
-	Dataflows        []DataflowSpec             `yaml:"dataflows"`
-	Resources        ResourcesSpec              `yaml:"resources"`
+	Dataflows        []ResourceGroup            `yaml:"dataflows"`
 }
 
 // EnvironmentSpec holds configuration specific to a single environment (e.g., test, production).
@@ -53,14 +62,6 @@ type ServiceSpec struct {
 type HealthCheckSpec struct {
 	Port int    `yaml:"port"`
 	Path string `yaml:"path"`
-}
-
-// DataflowSpec defines a logical grouping of services that work together.
-type DataflowSpec struct {
-	Name        string           `yaml:"name"`
-	Description string           `yaml:"description,omitempty"`
-	Services    []string         `yaml:"services"`
-	Lifecycle   *LifecyclePolicy `yaml:"lifecycle,omitempty"`
 }
 
 // LifecyclePolicy defines the lifecycle management rules for a dataflow.

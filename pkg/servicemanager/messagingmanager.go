@@ -22,47 +22,31 @@ func NewMessagingManager(client MessagingClient, logger zerolog.Logger) (*Messag
 	}
 	return &MessagingManager{
 		client: client,
-		logger: logger.With().Str("component", "MessagingManager").Logger(),
+		logger: logger.With().Str("subcomponent", "MessagingManager").Logger(),
 	}, nil
 }
 
-// GetTargetProjectID determines the project ID to use based on the environment.
-func GetTargetProjectID(cfg *TopLevelConfig, environment string) (string, error) {
-	if envSpec, ok := cfg.Environments[environment]; ok && envSpec.ProjectID != "" {
-		return envSpec.ProjectID, nil
-	}
-	if cfg.DefaultProjectID != "" {
-		return cfg.DefaultProjectID, nil
-	}
-	return "", fmt.Errorf("project ID not found for environment '%s' and no default_project_id set", environment)
-}
+// Setup creates all configured Pub/Sub topics and subscriptions for a given resource specification.
+// The signature is updated to remove the dependency on TopLevelConfig.
+func (m *MessagingManager) Setup(ctx context.Context, projectID string, resources ResourcesSpec) error {
+	m.logger.Info().Str("project_id", projectID).Msg("Starting Pub/Sub setup")
 
-// Setup creates all configured Pub/Sub topics and subscriptions for a given environment.
-func (m *MessagingManager) Setup(ctx context.Context, cfg *TopLevelConfig, environment string) error {
-	projectID, err := GetTargetProjectID(cfg, environment)
-	if err != nil {
-		return err
-	}
-	m.logger.Info().Str("project_id", projectID).Str("environment", environment).Msg("Starting Pub/Sub setup")
-
-	// FIX: Add a validation step before proceeding.
 	m.logger.Info().Msg("Validating resource configuration...")
-	if err := m.client.Validate(cfg.Resources); err != nil {
-		// The validation error is returned directly to the user.
+	if err := m.client.Validate(resources); err != nil {
 		m.logger.Error().Err(err).Msg("Resource configuration failed validation")
 		return err
 	}
 	m.logger.Info().Msg("Resource configuration is valid")
 
-	if err := m.setupTopics(ctx, cfg.Resources.Topics); err != nil {
+	if err := m.setupTopics(ctx, resources.Topics); err != nil {
 		return err
 	}
 
-	if err := m.setupSubscriptions(ctx, cfg.Resources.MessagingSubscriptions); err != nil {
+	if err := m.setupSubscriptions(ctx, resources.MessagingSubscriptions); err != nil {
 		return err
 	}
 
-	m.logger.Info().Str("project_id", projectID).Str("environment", environment).Msg("Pub/Sub setup completed successfully")
+	m.logger.Info().Str("project_id", projectID).Msg("Pub/Sub setup completed successfully")
 	return nil
 }
 
@@ -84,9 +68,7 @@ func (m *MessagingManager) setupTopics(ctx context.Context, topicsToCreate []Top
 			updateCfg := TopicConfig{
 				Labels: topicSpec.Labels,
 			}
-			// *** FIX: Return the error if the update fails ***
 			if _, updateErr := topic.Update(ctx, updateCfg); updateErr != nil {
-				// The underlying update call is failing. We must treat this as a fatal error.
 				return fmt.Errorf("failed to update topic configuration for '%s': %w", topicSpec.Name, updateErr)
 			}
 		} else {
@@ -131,7 +113,6 @@ func (m *MessagingManager) setupSubscriptions(ctx context.Context, subsToCreate 
 				MessageRetention:   subSpec.MessageRetention,
 				RetryPolicy:        subSpec.RetryPolicy,
 			}
-			// *** FIX: Return the error if the update fails ***
 			if _, updateErr := sub.Update(ctx, updateCfg); updateErr != nil {
 				return fmt.Errorf("failed to update subscription '%s': %w", subSpec.Name, updateErr)
 			}
@@ -147,26 +128,65 @@ func (m *MessagingManager) setupSubscriptions(ctx context.Context, subsToCreate 
 	return nil
 }
 
-// Teardown deletes all configured Pub/Sub resources for a given environment.
-func (m *MessagingManager) Teardown(ctx context.Context, cfg *TopLevelConfig, environment string) error {
-	projectID, err := GetTargetProjectID(cfg, environment)
-	if err != nil {
+// VerifyTopics checks if the specified Pub/Sub topics exist and have compatible configurations.
+func (m *MessagingManager) VerifyTopics(ctx context.Context, topicsToVerify []TopicConfig) error {
+	m.logger.Info().Int("count", len(topicsToVerify)).Msg("Verifying Pub/Sub topics...")
+	for _, topicSpec := range topicsToVerify {
+		if topicSpec.Name == "" {
+			m.logger.Warn().Msg("Skipping verification for topic with empty name")
+			continue
+		}
+		topic := m.client.Topic(topicSpec.Name)
+		exists, err := topic.Exists(ctx)
+		if err != nil {
+			return fmt.Errorf("failed to check existence of topic '%s' during verification: %w", topicSpec.Name, err)
+		}
+		if !exists {
+			return fmt.Errorf("topic '%s' not found during verification", topicSpec.Name)
+		}
+		m.logger.Debug().Str("topic_id", topicSpec.Name).Msg("Topic verified successfully (existence only).")
+	}
+	return nil
+}
+
+// VerifySubscriptions checks if the specified Pub/Sub subscriptions exist.
+func (m *MessagingManager) VerifySubscriptions(ctx context.Context, subsToVerify []SubscriptionConfig) error {
+	m.logger.Info().Int("count", len(subsToVerify)).Msg("Verifying Pub/Sub subscriptions...")
+	for _, subSpec := range subsToVerify {
+		if subSpec.Name == "" || subSpec.Topic == "" {
+			m.logger.Warn().Str("sub_name", subSpec.Name).Str("topic_name", subSpec.Topic).Msg("Skipping verification for subscription with empty name or topic")
+			continue
+		}
+
+		sub := m.client.Subscription(subSpec.Name)
+		exists, err := sub.Exists(ctx)
+		if err != nil {
+			return fmt.Errorf("failed to check existence of subscription '%s' during verification: %w", subSpec.Name, err)
+		}
+		if !exists {
+			return fmt.Errorf("subscription '%s' not found during verification", subSpec.Name)
+		}
+		m.logger.Debug().Str("subscription_id", subSpec.Name).Msg("Subscription verified successfully (existence only).")
+	}
+	return nil
+}
+
+// Teardown deletes all configured Pub/Sub resources for a given resource specification.
+func (m *MessagingManager) Teardown(ctx context.Context, projectID string, resources ResourcesSpec, teardownProtection bool) error {
+	m.logger.Info().Str("project_id", projectID).Msg("Starting Pub/Sub teardown")
+
+	if teardownProtection {
+		return fmt.Errorf("teardown protection enabled for this operation")
+	}
+
+	if err := m.teardownSubscriptions(ctx, resources.MessagingSubscriptions); err != nil {
 		return err
 	}
-	m.logger.Info().Str("project_id", projectID).Str("environment", environment).Msg("Starting Pub/Sub teardown")
-
-	if envSpec, ok := cfg.Environments[environment]; ok && envSpec.TeardownProtection {
-		return fmt.Errorf("teardown protection enabled for environment: %s", environment)
-	}
-
-	if err := m.teardownSubscriptions(ctx, cfg.Resources.MessagingSubscriptions); err != nil {
-		return err
-	}
-	if err := m.teardownTopics(ctx, cfg.Resources.Topics); err != nil {
+	if err := m.teardownTopics(ctx, resources.Topics); err != nil {
 		return err
 	}
 
-	m.logger.Info().Str("project_id", projectID).Str("environment", environment).Msg("Pub/Sub teardown completed successfully")
+	m.logger.Info().Str("project_id", projectID).Msg("Pub/Sub teardown completed successfully")
 	return nil
 }
 

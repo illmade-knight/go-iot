@@ -5,8 +5,6 @@ import (
 	"errors"
 	"fmt"
 	"github.com/rs/zerolog"
-
-	"golang.org/x/sync/errgroup"
 )
 
 // ProvisionedTopic holds details of a created topic.
@@ -53,6 +51,7 @@ type ServiceManager struct {
 	bigqueryManager  *BigQueryManager
 	servicesDef      ServicesDefinition
 	logger           zerolog.Logger
+	schemaRegistry   map[string]interface{}
 }
 
 // NewServiceManager creates a new central manager, initializing all required clients and sub-managers.
@@ -83,132 +82,107 @@ func NewServiceManager(ctx context.Context, servicesDef ServicesDefinition, env 
 // NewServiceManagerFromClients creates a new central manager from pre-existing clients.
 func NewServiceManagerFromClients(mc MessagingClient, sc StorageClient, bc BQClient, servicesDef ServicesDefinition, schemaRegistry map[string]interface{}, logger zerolog.Logger) (*ServiceManager, error) {
 	if mc == nil || sc == nil || bc == nil {
-		return nil, errors.New("all managers and clients must be non-nil")
+		return nil, errors.New("all clients must be non-nil")
 	}
 	if servicesDef == nil {
 		return nil, errors.New("services definition cannot be nil")
 	}
 
-	messagingManager, err := NewMessagingManager(mc, logger)
+	messagingManager, err := NewMessagingManager(mc, logger.With().Str("subcomponent", "MessagingManager").Logger())
 	if err != nil {
 		return nil, fmt.Errorf("failed to create Messaging manager: %w", err)
 	}
-	storageManager, err := NewStorageManager(sc, logger)
+	storageManager, err := NewStorageManager(sc, logger.With().Str("subcomponent", "StorageManager").Logger())
 	if err != nil {
-		return nil, fmt.Errorf("failed to create Messaging manager: %w", err)
+		return nil, fmt.Errorf("failed to create Storage manager: %w", err)
 	}
 
-	bigQueryManager, err := NewBigQueryManager(bc, logger, schemaRegistry)
+	bigqueryManager, err := NewBigQueryManager(bc, logger.With().Str("subcomponent", "BigQueryManager").Logger(), schemaRegistry)
 	if err != nil {
-		return nil, fmt.Errorf("failed to create Messaging manager: %w", err)
+		return nil, fmt.Errorf("failed to create BigQuery manager: %w", err)
 	}
 
 	return &ServiceManager{
 		messagingManager: messagingManager,
 		storageManager:   storageManager,
-		bigqueryManager:  bigQueryManager,
+		bigqueryManager:  bigqueryManager,
 		servicesDef:      servicesDef,
-		logger:           logger,
+		logger:           logger.With().Str("component", "ServiceManager").Logger(),
+		schemaRegistry:   schemaRegistry,
 	}, nil
 }
 
-// SetupAll runs the setup process for all resource types in the provided config.
-func (sm *ServiceManager) SetupAll(ctx context.Context, cfg *TopLevelConfig, environment string) (*ProvisionedResources, error) {
-	sm.logger.Info().Str("environment", environment).Msg("Starting full environment setup...")
-	g, gCtx := errgroup.WithContext(ctx)
+// SetupAll runs the setup process for all dataflows defined in the configuration.
+func (sm *ServiceManager) SetupAll(ctx context.Context, environment string) (*ProvisionedResources, error) {
+	sm.logger.Info().Str("environment", environment).Msg("Starting full environment setup for all dataflows...")
 
-	g.Go(func() error {
-		return sm.messagingManager.Setup(gCtx, cfg, environment)
-	})
-
-	g.Go(func() error {
-		return sm.storageManager.Setup(gCtx, cfg, environment)
-	})
-
-	g.Go(func() error {
-		bqManagerLogger := sm.logger.With().Str("component", "BigQuerySetup").Logger()
-		return sm.setupBigQueryResources(gCtx, cfg, environment, bqManagerLogger)
-	})
-
-	if err := g.Wait(); err != nil {
-		return nil, fmt.Errorf("failed during parallel setup: %w", err)
+	fullConfig, err := sm.servicesDef.GetTopLevelConfig()
+	if err != nil {
+		return nil, fmt.Errorf("failed to get top level config for SetupAll: %w", err)
 	}
 
-	provResources := &ProvisionedResources{}
-	for _, topic := range cfg.Resources.Topics {
-		provResources.Topics = append(provResources.Topics, ProvisionedTopic{Name: topic.Name, ProducerService: topic.ProducerService})
-	}
-	for _, sub := range cfg.Resources.MessagingSubscriptions {
-		provResources.Subscriptions = append(provResources.Subscriptions, ProvisionedSubscription{Name: sub.Name, Topic: sub.Topic})
-	}
-	for _, bucket := range cfg.Resources.GCSBuckets {
-		provResources.GCSBuckets = append(provResources.GCSBuckets, ProvisionedGCSBucket{Name: bucket.Name})
-	}
-	for _, dataset := range cfg.Resources.BigQueryDatasets {
-		provResources.BigQueryDatasets = append(provResources.BigQueryDatasets, ProvisionedBigQueryDataset{Name: dataset.Name})
-	}
-	for _, table := range cfg.Resources.BigQueryTables {
-		provResources.BigQueryTables = append(provResources.BigQueryTables, ProvisionedBigQueryTable{Dataset: table.Dataset, Name: table.Name})
+	// Aggregate resources from all dataflows
+	allProvResources := &ProvisionedResources{}
+
+	for _, dfSpec := range fullConfig.Dataflows {
+		provRes, err := sm.SetupDataflow(ctx, environment, dfSpec.Name)
+		if err != nil {
+			return nil, fmt.Errorf("failed to setup dataflow '%s': %w", dfSpec.Name, err)
+		}
+		// Append resources
+		allProvResources.Topics = append(allProvResources.Topics, provRes.Topics...)
+		allProvResources.Subscriptions = append(allProvResources.Subscriptions, provRes.Subscriptions...)
+		allProvResources.GCSBuckets = append(allProvResources.GCSBuckets, provRes.GCSBuckets...)
+		allProvResources.BigQueryDatasets = append(allProvResources.BigQueryDatasets, provRes.BigQueryDatasets...)
+		allProvResources.BigQueryTables = append(allProvResources.BigQueryTables, provRes.BigQueryTables...)
 	}
 
 	sm.logger.Info().Str("environment", environment).Msg("Full environment setup completed successfully.")
-	return provResources, nil
+	return allProvResources, nil
 }
 
-// TeardownAll runs the teardown process for all resource types defined in the provided config.
-func (sm *ServiceManager) TeardownAll(ctx context.Context, cfg *TopLevelConfig, environment string) error {
-	sm.logger.Info().Str("environment", environment).Msg("Starting full environment teardown...")
+// TeardownAll runs the teardown process for all dataflows defined in the configuration.
+func (sm *ServiceManager) TeardownAll(ctx context.Context, environment string) error {
+	sm.logger.Info().Str("environment", environment).Msg("Starting full environment teardown for all dataflows...")
 
-	bqManagerLogger := sm.logger.With().Str("component", "BigQueryTeardown").Logger()
-	if err := sm.teardownBigQueryResources(ctx, cfg, environment, bqManagerLogger); err != nil {
-		sm.logger.Error().Err(err).Msg("Error during BigQuery teardown, continuing...")
+	fullConfig, err := sm.servicesDef.GetTopLevelConfig()
+	if err != nil {
+		return fmt.Errorf("failed to get top level config for TeardownAll: %w", err)
 	}
 
-	if err := sm.storageManager.Teardown(ctx, cfg, environment); err != nil {
-		sm.logger.Error().Err(err).Msg("Error during GCS teardown, continuing...")
-	}
-
-	if err := sm.messagingManager.Teardown(ctx, cfg, environment); err != nil {
-		sm.logger.Error().Err(err).Msg("Error during Messaging teardown, continuing...")
+	// Teardown in reverse order
+	for i := len(fullConfig.Dataflows) - 1; i >= 0; i-- {
+		dfSpec := fullConfig.Dataflows[i]
+		if err := sm.TeardownDataflow(ctx, environment, dfSpec.Name); err != nil {
+			// Log error but continue to attempt tearing down other dataflows
+			sm.logger.Error().Err(err).Str("dataflow", dfSpec.Name).Msg("Failed to teardown dataflow, continuing...")
+		}
 	}
 
 	sm.logger.Info().Str("environment", environment).Msg("Full environment teardown completed.")
 	return nil
 }
 
-// setupBigQueryResources and teardownBigQueryResources are placeholders for future refactoring.
-func (sm *ServiceManager) setupBigQueryResources(ctx context.Context, cfg *TopLevelConfig, environment string, logger zerolog.Logger) error {
-	return sm.bigqueryManager.Setup(ctx, cfg, environment)
-}
-
-func (sm *ServiceManager) teardownBigQueryResources(ctx context.Context, cfg *TopLevelConfig, environment string, logger zerolog.Logger) error {
-	return sm.bigqueryManager.Teardown(ctx, cfg, environment)
-}
-
-// The Dataflow and filter methods remain the same.
+// SetupDataflow creates resources for a *specific* dataflow.
 func (sm *ServiceManager) SetupDataflow(ctx context.Context, environment string, dataflowName string) (*ProvisionedResources, error) {
 	sm.logger.Info().Str("dataflow", dataflowName).Str("environment", environment).Msg("Starting setup for specific dataflow")
 
-	targetDataflow, err := sm.servicesDef.GetDataflow(dataflowName)
-	if err != nil {
-		return nil, err
-	}
-	fullConfig, err := sm.servicesDef.GetTopLevelConfig()
+	dfm, err := sm.initDataflowManager(ctx, environment, dataflowName)
 	if err != nil {
 		return nil, err
 	}
 
-	serviceSet := make(map[string]struct{})
-	for _, serviceName := range targetDataflow.Services {
-		serviceSet[serviceName] = struct{}{}
-	}
-
-	dataflowConfig := sm.filterConfigForServices(fullConfig, serviceSet)
-	return sm.SetupAll(ctx, dataflowConfig, environment)
+	return dfm.Setup(ctx)
 }
 
+// TeardownDataflow tears down resources for a *specific* dataflow.
 func (sm *ServiceManager) TeardownDataflow(ctx context.Context, environment string, dataflowName string) error {
 	sm.logger.Info().Str("dataflow", dataflowName).Str("environment", environment).Msg("Starting teardown for specific dataflow")
+
+	dfm, err := sm.initDataflowManager(ctx, environment, dataflowName)
+	if err != nil {
+		return err
+	}
 
 	targetDataflow, err := sm.servicesDef.GetDataflow(dataflowName)
 	if err != nil {
@@ -224,64 +198,70 @@ func (sm *ServiceManager) TeardownDataflow(ctx context.Context, environment stri
 
 	fullConfig, err := sm.servicesDef.GetTopLevelConfig()
 	if err != nil {
-		return nil
+		return err
 	}
 
-	serviceSet := make(map[string]struct{})
-	for _, serviceName := range targetDataflow.Services {
-		serviceSet[serviceName] = struct{}{}
+	teardownProtection := false
+	if envSpec, ok := fullConfig.Environments[environment]; ok {
+		teardownProtection = envSpec.TeardownProtection
 	}
 
-	dataflowConfig := sm.filterConfigForServices(fullConfig, serviceSet)
-	return sm.TeardownAll(ctx, dataflowConfig, environment)
+	return dfm.Teardown(ctx, teardownProtection)
 }
 
-func (sm *ServiceManager) filterConfigForServices(fullConfig *TopLevelConfig, serviceSet map[string]struct{}) *TopLevelConfig {
-	dataflowConfig := &TopLevelConfig{
-		DefaultProjectID: fullConfig.DefaultProjectID,
-		DefaultLocation:  fullConfig.DefaultLocation,
-		Environments:     fullConfig.Environments,
-		Services:         fullConfig.Services,
-		Dataflows:        fullConfig.Dataflows,
-		Resources:        ResourcesSpec{},
+// VerifyDataflow checks if all resources for a specific dataflow exist.
+func (sm *ServiceManager) VerifyDataflow(ctx context.Context, environment string, dataflowName string) error {
+	sm.logger.Info().Str("dataflow", dataflowName).Str("environment", environment).Msg("Starting verification for specific dataflow")
+
+	dfm, err := sm.initDataflowManager(ctx, environment, dataflowName)
+	if err != nil {
+		return err
 	}
 
-	for _, topic := range fullConfig.Resources.Topics {
-		if _, ok := serviceSet[topic.ProducerService]; ok {
-			dataflowConfig.Resources.Topics = append(dataflowConfig.Resources.Topics, topic)
-		}
-	}
-	for _, sub := range fullConfig.Resources.MessagingSubscriptions {
-		if _, ok := serviceSet[sub.ConsumerService]; ok {
-			dataflowConfig.Resources.MessagingSubscriptions = append(dataflowConfig.Resources.MessagingSubscriptions, sub)
-		}
-	}
-	for _, bucket := range fullConfig.Resources.GCSBuckets {
-		for _, accessingService := range bucket.AccessingServices {
-			if _, ok := serviceSet[accessingService]; ok {
-				dataflowConfig.Resources.GCSBuckets = append(dataflowConfig.Resources.GCSBuckets, bucket)
-				break
-			}
-		}
-	}
-	for _, table := range fullConfig.Resources.BigQueryTables {
-		for _, accessingService := range table.AccessingServices {
-			if _, ok := serviceSet[accessingService]; ok {
-				dataflowConfig.Resources.BigQueryTables = append(dataflowConfig.Resources.BigQueryTables, table)
-				break
-			}
-		}
+	return dfm.Verify(ctx)
+}
+
+// initDataflowManager is a helper to DRY up the dataflow manager instantiation.
+func (sm *ServiceManager) initDataflowManager(ctx context.Context, environment, dataflowName string) (*DataflowManager, error) {
+	// Get the specific ResourceGroup
+	targetDataflow, err := sm.servicesDef.GetDataflow(dataflowName)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get dataflow spec '%s': %w", dataflowName, err)
 	}
 
-	requiredDatasets := make(map[string]struct{})
-	for _, table := range dataflowConfig.Resources.BigQueryTables {
-		requiredDatasets[table.Dataset] = struct{}{}
-	}
-	for _, dataset := range fullConfig.Resources.BigQueryDatasets {
-		if _, ok := requiredDatasets[dataset.Name]; ok {
-			dataflowConfig.Resources.BigQueryDatasets = append(dataflowConfig.Resources.BigQueryDatasets, dataset)
-		}
+	// Get the full config to resolve environment-specific settings
+	fullConfig, err := sm.servicesDef.GetTopLevelConfig()
+	if err != nil {
+		return nil, fmt.Errorf("failed to get top-level config: %w", err)
 	}
 
-	return dataflowConfig
+	// Determine project ID for the environment
+	projectID, err := sm.servicesDef.GetProjectID(environment)
+	if err != nil {
+		return nil, err
+	}
+
+	// Determine defaults from the environment spec
+	var defaultLocation string
+	var defaultLabels map[string]string
+	if envSpec, ok := fullConfig.Environments[environment]; ok {
+		defaultLocation = envSpec.DefaultLocation
+		defaultLabels = envSpec.DefaultLabels
+	}
+	// Fallback to top-level defaults if not in environment spec
+	if defaultLocation == "" {
+		defaultLocation = fullConfig.DefaultLocation
+	}
+
+	// Create and return the DataflowManager
+	return NewDataflowManager(
+		ctx,
+		targetDataflow,
+		projectID,
+		defaultLocation,
+		defaultLabels,
+		environment,
+		sm.schemaRegistry,
+		sm.logger,
+	)
 }

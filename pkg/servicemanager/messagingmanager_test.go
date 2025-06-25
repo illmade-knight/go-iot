@@ -3,7 +3,6 @@ package servicemanager_test
 import (
 	"context"
 	"errors"
-	"fmt"
 	"io"
 	"testing"
 	"time"
@@ -97,7 +96,6 @@ func (m *MockMessagingClient) Close() error {
 	return args.Error(0)
 }
 
-// *** FIX: Correctly pass the arguments to the mock framework. ***
 func (m *MockMessagingClient) Validate(resources servicemanager.ResourcesSpec) error {
 	args := m.Called(resources)
 	return args.Error(0)
@@ -105,39 +103,32 @@ func (m *MockMessagingClient) Validate(resources servicemanager.ResourcesSpec) e
 
 // --- Helper Function ---
 
-func getTestMessagingConfig() *servicemanager.TopLevelConfig {
-	return &servicemanager.TopLevelConfig{
-		DefaultProjectID: "test-project",
-		Environments: map[string]servicemanager.EnvironmentSpec{
-			"test": {ProjectID: "test-project"},
-			"prod": {ProjectID: "prod-project", TeardownProtection: true},
+func getTestMessagingResources() servicemanager.ResourcesSpec {
+	return servicemanager.ResourcesSpec{
+		Topics: []servicemanager.TopicConfig{
+			{Name: "test-topic-1"},
+			{Name: "test-topic-2", Labels: map[string]string{"env": "test"}},
 		},
-		Resources: servicemanager.ResourcesSpec{
-			Topics: []servicemanager.TopicConfig{
-				{Name: "test-topic-1"},
-				{Name: "test-topic-2", Labels: map[string]string{"env": "test"}},
-			},
-			MessagingSubscriptions: []servicemanager.SubscriptionConfig{
-				{Name: "test-sub-1", Topic: "test-topic-1", AckDeadlineSeconds: 30, MessageRetention: servicemanager.Duration(10 * time.Minute)},
-			},
+		MessagingSubscriptions: []servicemanager.SubscriptionConfig{
+			{Name: "test-sub-1", Topic: "test-topic-1", AckDeadlineSeconds: 30, MessageRetention: servicemanager.Duration(10 * time.Minute)},
 		},
 	}
 }
 
-// --- Test Cases ---
+// --- Test Cases for Setup ---
 
-func TestPubSubManager_Setup_CreateNewResources(t *testing.T) {
+func TestMessagingManager_Setup_CreateNewResources(t *testing.T) {
 	// Arrange
 	mockClient := new(MockMessagingClient)
 	logger := zerolog.New(io.Discard)
 	manager, err := servicemanager.NewMessagingManager(mockClient, logger)
 	require.NoError(t, err)
 
-	config := getTestMessagingConfig()
+	resources := getTestMessagingResources()
+	projectID := "test-project"
 	ctx := context.Background()
 
-	// *** FIX: Add expectation for the Validate call. ***
-	mockClient.On("Validate", config.Resources).Return(nil)
+	mockClient.On("Validate", resources).Return(nil)
 
 	mockTopic1 := new(MockMessagingTopic)
 	mockClient.On("Topic", "test-topic-1").Return(mockTopic1)
@@ -148,39 +139,39 @@ func TestPubSubManager_Setup_CreateNewResources(t *testing.T) {
 	mockTopic2 := new(MockMessagingTopic)
 	mockClient.On("Topic", "test-topic-2").Return(mockTopic2)
 	mockTopic2.On("Exists", ctx).Return(false, nil)
-	mockClient.On("CreateTopicWithConfig", ctx, config.Resources.Topics[1]).Return(mockTopic2, nil)
+	mockClient.On("CreateTopicWithConfig", ctx, resources.Topics[1]).Return(mockTopic2, nil)
 	mockTopic2.On("ID").Return("test-topic-2")
 
 	mockSub1 := new(MockMessagingSubscription)
 	mockClient.On("Subscription", "test-sub-1").Return(mockSub1)
 	mockSub1.On("Exists", ctx).Return(false, nil)
-	mockClient.On("CreateSubscription", ctx, config.Resources.MessagingSubscriptions[0]).Return(mockSub1, nil)
+	mockClient.On("CreateSubscription", ctx, resources.MessagingSubscriptions[0]).Return(mockSub1, nil)
 	mockSub1.On("ID").Return("test-sub-1")
 
-	// Act
-	err = manager.Setup(ctx, config, "test")
+	// Act - Call Setup with the new signature
+	err = manager.Setup(ctx, projectID, resources)
 
 	// Assert
 	assert.NoError(t, err)
 	mockClient.AssertExpectations(t)
 }
 
-// *** ADDED: New test case for validation failure. ***
-func TestPubSubManager_Setup_ValidationFails(t *testing.T) {
+func TestMessagingManager_Setup_ValidationFails(t *testing.T) {
 	// Arrange
 	mockClient := new(MockMessagingClient)
 	logger := zerolog.New(io.Discard)
 	manager, err := servicemanager.NewMessagingManager(mockClient, logger)
 	require.NoError(t, err)
 
-	config := getTestMessagingConfig()
+	resources := getTestMessagingResources()
+	projectID := "test-project"
 	ctx := context.Background()
 
 	expectedErr := errors.New("invalid subscription config")
-	mockClient.On("Validate", config.Resources).Return(expectedErr)
+	mockClient.On("Validate", resources).Return(expectedErr)
 
-	// Act
-	err = manager.Setup(ctx, config, "test")
+	// Act - Call Setup with the new signature
+	err = manager.Setup(ctx, projectID, resources)
 
 	// Assert
 	assert.Error(t, err)
@@ -191,13 +182,113 @@ func TestPubSubManager_Setup_ValidationFails(t *testing.T) {
 	mockClient.AssertNotCalled(t, "Subscription", mock.Anything)
 }
 
-func TestPubSubManager_Teardown_Success(t *testing.T) {
+// --- Test Cases for Verify (No change needed as signature was already correct) ---
+
+func TestMessagingManager_VerifyTopics(t *testing.T) {
+	ctx := context.Background()
+	logger := zerolog.New(io.Discard)
+	mockClient := new(MockMessagingClient)
+	manager, err := servicemanager.NewMessagingManager(mockClient, logger)
+	require.NoError(t, err)
+
+	t.Run("All Topics Exist", func(t *testing.T) {
+		topicsToVerify := []servicemanager.TopicConfig{
+			{Name: "existing-topic-1"},
+			{Name: "existing-topic-2"},
+		}
+
+		mockTopic1 := new(MockMessagingTopic)
+		mockClient.On("Topic", "existing-topic-1").Return(mockTopic1).Once()
+		mockTopic1.On("Exists", ctx).Return(true, nil).Once()
+
+		mockTopic2 := new(MockMessagingTopic)
+		mockClient.On("Topic", "existing-topic-2").Return(mockTopic2).Once()
+		mockTopic2.On("Exists", ctx).Return(true, nil).Once()
+
+		err := manager.VerifyTopics(ctx, topicsToVerify)
+		assert.NoError(t, err)
+		mockClient.AssertExpectations(t)
+	})
+
+	t.Run("Some Topics Missing", func(t *testing.T) {
+		topicsToVerify := []servicemanager.TopicConfig{
+			{Name: "existing-topic"},
+			{Name: "missing-topic"},
+		}
+
+		mockTopicExisting := new(MockMessagingTopic)
+		mockClient.On("Topic", "existing-topic").Return(mockTopicExisting).Once()
+		mockTopicExisting.On("Exists", ctx).Return(true, nil).Once()
+
+		mockTopicMissing := new(MockMessagingTopic)
+		mockClient.On("Topic", "missing-topic").Return(mockTopicMissing).Once()
+		mockTopicMissing.On("Exists", ctx).Return(false, nil).Once()
+
+		err := manager.VerifyTopics(ctx, topicsToVerify)
+		assert.Error(t, err)
+		assert.Contains(t, err.Error(), "topic 'missing-topic' not found during verification")
+		mockClient.AssertExpectations(t)
+	})
+}
+
+func TestMessagingManager_VerifySubscriptions(t *testing.T) {
+	ctx := context.Background()
+	logger := zerolog.New(io.Discard)
+	mockClient := new(MockMessagingClient)
+	manager, err := servicemanager.NewMessagingManager(mockClient, logger)
+	require.NoError(t, err)
+
+	t.Run("All Subscriptions Exist", func(t *testing.T) {
+		subsToVerify := []servicemanager.SubscriptionConfig{
+			{Name: "existing-sub-1", Topic: "topic-a"},
+			{Name: "existing-sub-2", Topic: "topic-b"},
+		}
+
+		mockSub1 := new(MockMessagingSubscription)
+		mockClient.On("Subscription", "existing-sub-1").Return(mockSub1).Once()
+		mockSub1.On("Exists", ctx).Return(true, nil).Once()
+
+		mockSub2 := new(MockMessagingSubscription)
+		mockClient.On("Subscription", "existing-sub-2").Return(mockSub2).Once()
+		mockSub2.On("Exists", ctx).Return(true, nil).Once()
+
+		err := manager.VerifySubscriptions(ctx, subsToVerify)
+		assert.NoError(t, err)
+		mockClient.AssertExpectations(t)
+	})
+
+	t.Run("Some Subscriptions Missing", func(t *testing.T) {
+		subsToVerify := []servicemanager.SubscriptionConfig{
+			{Name: "existing-sub", Topic: "topic-x"},
+			{Name: "missing-sub", Topic: "topic-y"},
+		}
+
+		mockSubExisting := new(MockMessagingSubscription)
+		mockClient.On("Subscription", "existing-sub").Return(mockSubExisting).Once()
+		mockSubExisting.On("Exists", ctx).Return(true, nil).Once()
+
+		mockSubMissing := new(MockMessagingSubscription)
+		mockClient.On("Subscription", "missing-sub").Return(mockSubMissing).Once()
+		mockSubMissing.On("Exists", ctx).Return(false, nil).Once()
+
+		err := manager.VerifySubscriptions(ctx, subsToVerify)
+		assert.Error(t, err)
+		assert.Contains(t, err.Error(), "subscription 'missing-sub' not found during verification")
+		mockClient.AssertExpectations(t)
+	})
+}
+
+// --- Test Cases for Teardown ---
+
+func TestMessagingManager_Teardown_Success(t *testing.T) {
 	// Arrange
 	mockClient := new(MockMessagingClient)
 	logger := zerolog.New(io.Discard)
 	manager, err := servicemanager.NewMessagingManager(mockClient, logger)
 	require.NoError(t, err)
-	config := getTestMessagingConfig()
+
+	resources := getTestMessagingResources()
+	projectID := "test-project"
 	ctx := context.Background()
 
 	mockSub1 := new(MockMessagingSubscription)
@@ -212,29 +303,31 @@ func TestPubSubManager_Teardown_Success(t *testing.T) {
 	mockClient.On("Topic", "test-topic-2").Return(mockTopic2)
 	mockTopic2.On("Delete", ctx).Return(nil)
 
-	// Act
-	err = manager.Teardown(ctx, config, "test")
+	// Act - Call Teardown with the new signature
+	err = manager.Teardown(ctx, projectID, resources, false) // teardownProtection is false
 
 	// Assert
 	assert.NoError(t, err)
 	mockClient.AssertExpectations(t)
 }
 
-func TestPubSubManager_Teardown_ProtectionEnabled(t *testing.T) {
+func TestMessagingManager_Teardown_ProtectionEnabled(t *testing.T) {
 	// Arrange
 	mockClient := new(MockMessagingClient)
 	logger := zerolog.New(io.Discard)
 	manager, err := servicemanager.NewMessagingManager(mockClient, logger)
 	require.NoError(t, err)
-	config := getTestMessagingConfig()
+
+	resources := getTestMessagingResources()
+	projectID := "prod-project"
 	ctx := context.Background()
 
-	// Act
-	err = manager.Teardown(ctx, config, "prod")
+	// Act - Call Teardown with the new signature and teardownProtection set to true
+	err = manager.Teardown(ctx, projectID, resources, true)
 
 	// Assert
 	assert.Error(t, err)
-	assert.EqualError(t, err, fmt.Sprintf("teardown protection enabled for environment: %s", "prod"))
+	assert.EqualError(t, err, "teardown protection enabled for this operation")
 	mockClient.AssertNotCalled(t, "Subscription", mock.Anything)
 	mockClient.AssertNotCalled(t, "Topic", mock.Anything)
 }

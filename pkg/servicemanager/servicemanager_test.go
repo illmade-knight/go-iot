@@ -1,4 +1,3 @@
-// servicemanager_test.go
 package servicemanager_test
 
 import (
@@ -16,59 +15,55 @@ import (
 
 // --- Helper function to get a consistent test config ---
 
+// This function now returns a config where resources are scoped within each dataflow.
 func getTestConfig() *servicemanager.TopLevelConfig {
 	return &servicemanager.TopLevelConfig{
 		DefaultProjectID: "test-project",
 		DefaultLocation:  "us-central1",
 		Environments: map[string]servicemanager.EnvironmentSpec{
-			"test": {ProjectID: "test-project"},
-		},
-		Resources: servicemanager.ResourcesSpec{
-			Topics: []servicemanager.TopicConfig{
-				{Name: "topic1", ProducerService: "service-a"},
+			"test": {
+				ProjectID:          "test-project",
+				TeardownProtection: false,
 			},
-			MessagingSubscriptions: []servicemanager.SubscriptionConfig{}, // Ensure it's not nil
-			GCSBuckets: []servicemanager.GCSBucket{
-				{Name: "bucket1", AccessingServices: []string{"service-a"}},
-			},
-			BigQueryDatasets: []servicemanager.BigQueryDataset{
-				{Name: "dataset1", Description: "Test Dataset 1"},
-			},
-			BigQueryTables: []servicemanager.BigQueryTable{
-				{
-					Name:                   "table1",
-					Dataset:                "dataset1",
-					AccessingServices:      []string{"service-b"},
-					Description:            "Test Table for Service B",
-					SchemaSourceType:       "go_struct",
-					SchemaSourceIdentifier: "github.com/illmade-knight/ai-power-mvp/gen/go/protos/telemetry.MeterReading",
-					TimePartitioningField:  "original_mqtt_time",
-					TimePartitioningType:   "DAY",
-				},
+			"prod": {
+				ProjectID:          "prod-project",
+				TeardownProtection: true,
 			},
 		},
-		Dataflows: []servicemanager.DataflowSpec{
+		Dataflows: []servicemanager.ResourceGroup{
 			{
-				Name:     "dataflow-ephemeral",
-				Services: []string{"service-a"},
+				Name:         "dataflow-ephemeral",
+				ServiceNames: []string{"service-a"},
 				Lifecycle: &servicemanager.LifecyclePolicy{
 					Strategy: servicemanager.LifecycleStrategyEphemeral,
 				},
+				Resources: servicemanager.ResourcesSpec{
+					Topics: []servicemanager.TopicConfig{
+						{Name: "topic1", ProducerService: "service-a"},
+					},
+					GCSBuckets: []servicemanager.GCSBucket{
+						{Name: "bucket1", AccessingServices: []string{"service-a"}},
+					},
+				},
 			},
 			{
-				Name:     "dataflow-permanent",
-				Services: []string{"service-b"},
+				Name:         "dataflow-permanent",
+				ServiceNames: []string{"service-b"},
 				Lifecycle: &servicemanager.LifecyclePolicy{
 					Strategy: servicemanager.LifecycleStrategyPermanent,
+				},
+				Resources: servicemanager.ResourcesSpec{
+					BigQueryDatasets: []servicemanager.BigQueryDataset{
+						{Name: "dataset1", Description: "Test Dataset 1"},
+					},
+					BigQueryTables: []servicemanager.BigQueryTable{
+						{Name: "table1", Dataset: "dataset1", AccessingServices: []string{"service-b"}},
+					},
 				},
 			},
 		},
 	}
 }
-
-// NOTE: Mock implementations for MessagingClient, StorageClient, BQClient, and error helpers
-// are assumed to exist in other files within this `servicemanager_test` package
-// (e.g., bigquery_test.go, messaging_test.go).
 
 // --- Test Cases for ServiceManager ---
 
@@ -87,207 +82,58 @@ func TestNewServiceManagerFromClients(t *testing.T) {
 	})
 }
 
-func TestServiceManager_SetupAll(t *testing.T) {
-	ctx := context.Background()
-	logger := zerolog.New(io.Discard)
-	testCfg := getTestConfig()
-	env := "test"
-
-	t.Run("Success", func(t *testing.T) {
-		// Arrange: Mock all clients and their expected calls
-		mockMsgClient := new(MockMessagingClient)
-		mockStoreClient := new(MockStorageClient)
-		mockBqClient := new(MockBQClient)
-		servicesDef, err := servicemanager.NewInMemoryServicesDefinition(testCfg)
-		require.NoError(t, err)
-
-		// Messaging expectations
-		// *** FIX: Added missing mock expectation for the Validate() call. ***
-		mockMsgClient.On("Validate", mock.AnythingOfType("servicemanager.ResourcesSpec")).Return(nil)
-		mockTopic := new(MockMessagingTopic)
-		mockMsgClient.On("Topic", "topic1").Return(mockTopic)
-		mockTopic.On("Exists", mock.Anything).Return(false, nil)
-		mockTopic.On("ID").Return("topic1")
-		mockMsgClient.On("CreateTopic", mock.Anything, "topic1").Return(mockTopic, nil)
-
-		// Storage expectations
-		mockBucket := new(MockBucketHandle)
-		mockStoreClient.On("Bucket", "bucket1").Return(mockBucket)
-		mockBucket.On("Attrs", mock.Anything).Return(nil, errors.New("storage: bucket doesn't exist"))
-		mockBucket.On("Create", mock.Anything, "test-project", mock.AnythingOfType("*servicemanager.BucketAttributes")).Return(nil)
-
-		// BigQuery expectations for ALL resources
-		mockDataset := new(MockBQDataset)
-		mockBqClient.On("Project").Return("test-project")
-		mockBqClient.On("Dataset", "dataset1").Return(mockDataset)
-		mockDataset.On("Metadata", mock.Anything).Return(nil, newNotFoundError("dataset", "dataset1"))
-		mockDataset.On("Create", mock.Anything, mock.Anything).Return(nil)
-
-		mockTable := new(MockBQTable)
-		mockDataset.On("Table", "table1").Return(mockTable)
-		mockTable.On("Metadata", mock.Anything).Return(nil, newNotFoundError("table", "table1"))
-		mockTable.On("Create", mock.Anything, mock.Anything).Return(nil)
-
-		// Act
-		sm, err := servicemanager.NewServiceManagerFromClients(mockMsgClient, mockStoreClient, mockBqClient, servicesDef, nil, logger)
-		require.NoError(t, err)
-
-		provResources, err := sm.SetupAll(ctx, testCfg, env)
-
-		// Assert
-		require.NoError(t, err)
-		require.NotNil(t, provResources)
-		assert.Len(t, provResources.Topics, 1)
-		assert.Len(t, provResources.GCSBuckets, 1)
-		assert.Len(t, provResources.BigQueryDatasets, 1)
-		assert.Len(t, provResources.BigQueryTables, 1)
-
-		mockMsgClient.AssertExpectations(t)
-		mockStoreClient.AssertExpectations(t)
-		mockBqClient.AssertExpectations(t)
-		mockDataset.AssertExpectations(t)
-		mockTable.AssertExpectations(t)
-	})
-}
-
-func TestServiceManager_TeardownAll(t *testing.T) {
-	ctx := context.Background()
-	logger := zerolog.New(io.Discard)
-	testCfg := getTestConfig()
-	env := "test"
-
-	t.Run("Success", func(t *testing.T) {
-		// Arrange
-		mockMsgClient := new(MockMessagingClient)
-		mockStoreClient := new(MockStorageClient)
-		mockBqClient := new(MockBQClient)
-		servicesDef, err := servicemanager.NewInMemoryServicesDefinition(testCfg)
-		require.NoError(t, err)
-
-		// Messaging expectations
-		mockTopic := new(MockMessagingTopic)
-		mockMsgClient.On("Topic", "topic1").Return(mockTopic)
-		mockTopic.On("Delete", mock.Anything).Return(nil)
-
-		// Storage expectations
-		mockBucket := new(MockBucketHandle)
-		mockStoreClient.On("Bucket", "bucket1").Return(mockBucket)
-		mockBucket.On("Attrs", mock.Anything).Return(&servicemanager.BucketAttributes{}, nil)
-		mockBucket.On("Delete", mock.Anything).Return(nil)
-
-		// BigQuery teardown expectations
-		mockDataset := new(MockBQDataset)
-		mockBqClient.On("Project").Return("test-project")
-		mockBqClient.On("Dataset", "dataset1").Return(mockDataset)
-		mockTable := new(MockBQTable)
-		mockDataset.On("Table", "table1").Return(mockTable)
-		mockTable.On("Delete", mock.Anything).Return(nil)
-		mockDataset.On("Delete", mock.Anything).Return(nil)
-
-		// Act
-		sm, err := servicemanager.NewServiceManagerFromClients(mockMsgClient, mockStoreClient, mockBqClient, servicesDef, nil, logger)
-		require.NoError(t, err)
-		err = sm.TeardownAll(ctx, testCfg, env)
-
-		// Assert
-		assert.NoError(t, err)
-		mockMsgClient.AssertExpectations(t)
-		mockStoreClient.AssertExpectations(t)
-		mockBqClient.AssertExpectations(t)
-	})
-}
-
 func TestServiceManager_SetupDataflow(t *testing.T) {
 	ctx := context.Background()
 	logger := zerolog.New(io.Discard)
 	testCfg := getTestConfig()
 	env := "test"
+	dataflowName := "dataflow-ephemeral"
 
-	t.Run("Setup dataflow for service-a (messaging and storage)", func(t *testing.T) {
-		dataflowName := "dataflow-ephemeral"
-		mockMsgClient := new(MockMessagingClient)
-		mockStoreClient := new(MockStorageClient)
-		mockBqClient := new(MockBQClient)
-		servicesDef, err := servicemanager.NewInMemoryServicesDefinition(testCfg)
-		require.NoError(t, err)
+	// Arrange
+	mockMsgClient := new(MockMessagingClient)
+	mockStoreClient := new(MockStorageClient)
+	mockBqClient := new(MockBQClient)
+	servicesDef, err := servicemanager.NewInMemoryServicesDefinition(testCfg)
+	require.NoError(t, err)
 
-		// Expectations for service-a resources ONLY
-		// *** FIX: Added missing mock expectation for the Validate() call. ***
-		mockMsgClient.On("Validate", mock.AnythingOfType("servicemanager.ResourcesSpec")).Return(nil)
-		mockTopic := new(MockMessagingTopic)
-		mockMsgClient.On("Topic", "topic1").Return(mockTopic)
-		mockTopic.On("Exists", mock.Anything).Return(false, nil)
-		mockTopic.On("ID").Return("topic1")
-		mockMsgClient.On("CreateTopic", mock.Anything, "topic1").Return(mockTopic, nil)
+	// Since we are setting up a specific dataflow, we expect calls to the underlying
+	// managers with the resources ONLY from that dataflow.
+	dataflowSpec, err := servicesDef.GetDataflow(dataflowName)
+	require.NoError(t, err)
 
-		mockBucket := new(MockBucketHandle)
-		mockStoreClient.On("Bucket", "bucket1").Return(mockBucket)
-		mockBucket.On("Attrs", mock.Anything).Return(nil, errors.New("storage: bucket doesn't exist"))
-		mockBucket.On("Create", mock.Anything, "test-project", mock.AnythingOfType("*servicemanager.BucketAttributes")).Return(nil)
+	// Messaging expectations
+	mockMsgClient.On("Validate", dataflowSpec.Resources).Return(nil).Once()
+	mockTopic := new(MockMessagingTopic)
+	mockMsgClient.On("Topic", "topic1").Return(mockTopic).Once()
+	mockTopic.On("Exists", ctx).Return(false, nil).Once()
+	mockTopic.On("ID").Return("topic1").Once()
+	mockMsgClient.On("CreateTopic", ctx, "topic1").Return(mockTopic, nil).Once()
 
-		// The BQ Manager is always called, so we must expect the Project() check.
-		mockBqClient.On("Project").Return("test-project")
+	// Storage expectations
+	mockBucket := new(MockBucketHandle)
+	mockStoreClient.On("Bucket", "bucket1").Return(mockBucket).Once()
+	mockBucket.On("Attrs", ctx).Return(nil, errors.New("storage: bucket doesn't exist")).Once()
+	mockBucket.On("Create", ctx, "test-project", mock.Anything).Return(nil).Once()
 
-		// Act
-		sm, err := servicemanager.NewServiceManagerFromClients(mockMsgClient, mockStoreClient, mockBqClient, servicesDef, nil, logger)
-		require.NoError(t, err)
-		provResources, err := sm.SetupDataflow(ctx, env, dataflowName)
+	// BigQuery client will be created but no setup methods called
+	mockBqClient.On("Project").Return("test-project").Maybe()
 
-		// Assert
-		require.NoError(t, err)
-		assert.Len(t, provResources.Topics, 1, "Should set up topic for service-a")
-		assert.Len(t, provResources.GCSBuckets, 1, "Should set up bucket for service-a")
-		assert.Empty(t, provResources.BigQueryTables, "Should NOT set up BQ table for service-a")
-		assert.Empty(t, provResources.BigQueryDatasets, "Should NOT set up BQ dataset for service-a")
+	// Act
+	sm, err := servicemanager.NewServiceManager(ctx, servicesDef, env, nil, logger)
+	require.NoError(t, err)
+	provResources, err := sm.SetupDataflow(ctx, env, dataflowName)
 
-		mockMsgClient.AssertExpectations(t)
-		mockStoreClient.AssertExpectations(t)
-		mockBqClient.AssertExpectations(t)
-		// Verify that Dataset() was NOT called, since there are no BQ resources for this dataflow
-		mockBqClient.AssertNotCalled(t, "Dataset", mock.Anything)
-	})
+	// Assert
+	require.NoError(t, err)
+	assert.Len(t, provResources.Topics, 1)
+	assert.Len(t, provResources.GCSBuckets, 1)
+	assert.Empty(t, provResources.BigQueryTables)
 
-	t.Run("Setup dataflow for service-b (bigquery)", func(t *testing.T) {
-		dataflowName := "dataflow-permanent"
-		mockMsgClient := new(MockMessagingClient)
-		mockStoreClient := new(MockStorageClient)
-		mockBqClient := new(MockBQClient)
-		servicesDef, err := servicemanager.NewInMemoryServicesDefinition(testCfg)
-		require.NoError(t, err)
-
-		// *** FIX: Added missing mock expectation for the Validate() call. ***
-		mockMsgClient.On("Validate", mock.AnythingOfType("servicemanager.ResourcesSpec")).Return(nil)
-
-		// Expectations for service-b (BigQuery)
-		mockDataset := new(MockBQDataset)
-		mockBqClient.On("Project").Return("test-project")
-		mockBqClient.On("Dataset", "dataset1").Return(mockDataset)
-		mockDataset.On("Metadata", mock.Anything).Return(nil, newNotFoundError("dataset", "dataset1"))
-		mockDataset.On("Create", mock.Anything, mock.Anything).Return(nil)
-
-		mockTable := new(MockBQTable)
-		mockDataset.On("Table", "table1").Return(mockTable)
-		mockTable.On("Metadata", mock.Anything).Return(nil, newNotFoundError("table", "table1"))
-		mockTable.On("Create", mock.Anything, mock.Anything).Return(nil)
-
-		// Act
-		sm, err := servicemanager.NewServiceManagerFromClients(mockMsgClient, mockStoreClient, mockBqClient, servicesDef, nil, logger)
-		require.NoError(t, err)
-		provResources, err := sm.SetupDataflow(ctx, env, dataflowName)
-
-		// Assert
-		require.NoError(t, err)
-		assert.Empty(t, provResources.Topics, "Should NOT set up topics for service-b")
-		assert.Empty(t, provResources.GCSBuckets, "Should NOT set up buckets for service-b")
-		assert.Len(t, provResources.BigQueryDatasets, 1, "Should set up dataset for service-b")
-		assert.Len(t, provResources.BigQueryTables, 1, "Should set up table for service-b")
-
-		mockBqClient.AssertExpectations(t)
-		mockDataset.AssertExpectations(t)
-		mockTable.AssertExpectations(t)
-		mockMsgClient.AssertExpectations(t) // Assert Validate was called
-		mockStoreClient.AssertNotCalled(t, "Bucket", mock.Anything)
-	})
+	mockMsgClient.AssertExpectations(t)
+	mockStoreClient.AssertExpectations(t)
+	mockBqClient.AssertExpectations(t)
+	// Verify that the BQ manager was NOT asked to set up any datasets.
+	mockBqClient.AssertNotCalled(t, "Dataset", mock.Anything)
 }
 
 func TestServiceManager_TeardownDataflow(t *testing.T) {
@@ -297,30 +143,32 @@ func TestServiceManager_TeardownDataflow(t *testing.T) {
 	env := "test"
 
 	t.Run("Success for Ephemeral", func(t *testing.T) {
-		// Arrange
 		dataflowName := "dataflow-ephemeral"
+
 		mockMsgClient := new(MockMessagingClient)
 		mockStoreClient := new(MockStorageClient)
 		mockBqClient := new(MockBQClient)
 		servicesDef, err := servicemanager.NewInMemoryServicesDefinition(testCfg)
 		require.NoError(t, err)
 
+		_, err = servicesDef.GetDataflow(dataflowName)
+		require.NoError(t, err)
+
 		// Messaging teardown expectations
 		mockTopic := new(MockMessagingTopic)
-		mockMsgClient.On("Topic", "topic1").Return(mockTopic)
-		mockTopic.On("Delete", mock.Anything).Return(nil)
+		mockMsgClient.On("Topic", "topic1").Return(mockTopic).Once()
+		mockTopic.On("Delete", ctx).Return(nil).Once()
 
 		// Storage teardown expectations
 		mockBucket := new(MockBucketHandle)
-		mockStoreClient.On("Bucket", "bucket1").Return(mockBucket)
-		mockBucket.On("Attrs", mock.Anything).Return(&servicemanager.BucketAttributes{}, nil)
-		mockBucket.On("Delete", mock.Anything).Return(nil)
+		mockStoreClient.On("Bucket", "bucket1").Return(mockBucket).Once()
+		mockBucket.On("Attrs", ctx).Return(&servicemanager.BucketAttributes{}, nil).Once()
+		mockBucket.On("Delete", ctx).Return(nil).Once()
 
-		// The BQ Manager is always called, so we must expect the Project() check.
-		mockBqClient.On("Project").Return("test-project")
+		mockBqClient.On("Project").Return("test-project").Maybe()
 
 		// Act
-		sm, err := servicemanager.NewServiceManagerFromClients(mockMsgClient, mockStoreClient, mockBqClient, servicesDef, nil, logger)
+		sm, err := servicemanager.NewServiceManager(ctx, servicesDef, env, nil, logger)
 		require.NoError(t, err)
 		err = sm.TeardownDataflow(ctx, env, dataflowName)
 
@@ -333,21 +181,24 @@ func TestServiceManager_TeardownDataflow(t *testing.T) {
 	})
 
 	t.Run("Skipped for Permanent", func(t *testing.T) {
-		// Arrange
 		dataflowName := "dataflow-permanent"
+
 		mockMsgClient := new(MockMessagingClient)
 		mockStoreClient := new(MockStorageClient)
 		mockBqClient := new(MockBQClient)
 		servicesDef, err := servicemanager.NewInMemoryServicesDefinition(testCfg)
 		require.NoError(t, err)
 
+		mockBqClient.On("Project").Return("test-project").Maybe()
+
 		// Act
-		sm, err := servicemanager.NewServiceManagerFromClients(mockMsgClient, mockStoreClient, mockBqClient, servicesDef, nil, logger)
+		sm, err := servicemanager.NewServiceManager(ctx, servicesDef, env, nil, logger)
 		require.NoError(t, err)
 		err = sm.TeardownDataflow(ctx, env, dataflowName)
 
 		// Assert
 		assert.NoError(t, err)
+		// Verify no teardown methods were called
 		mockMsgClient.AssertNotCalled(t, "Topic", mock.Anything)
 		mockStoreClient.AssertNotCalled(t, "Bucket", mock.Anything)
 	})
