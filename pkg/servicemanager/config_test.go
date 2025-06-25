@@ -21,117 +21,86 @@ func createTestYAMLFile(t *testing.T, content string) string {
 }
 
 func TestLoadAndValidateConfig(t *testing.T) {
-	// Base valid YAML that includes at least one resource.
+	// Base valid YAML that includes a global resource.
 	validBaseYAML := `
 default_project_id: "default-project"
 resources:
-  messaging_topics:
-    - name: "topic-a"
+  gcs_buckets:
+    - name: "global-bucket"
 `
 
 	testCases := []struct {
 		name          string
 		yamlContent   string
 		expectError   bool
-		errorContains string // Substring to check in the error message
+		errorContains string
 		checkConfig   func(t *testing.T, cfg *TopLevelConfig)
 	}{
 		{
-			name:        "Valid configuration with Messaging Topic",
+			name:        "Valid configuration with global resource",
 			yamlContent: validBaseYAML,
 			expectError: false,
 			checkConfig: func(t *testing.T, cfg *TopLevelConfig) {
 				require.NotNil(t, cfg)
 				assert.Equal(t, "default-project", cfg.DefaultProjectID)
-				assert.Len(t, cfg.Resources.Topics, 1)
-				assert.Equal(t, "topic-a", cfg.Resources.Topics[0].Name)
+				require.Len(t, cfg.ResourceGroup.Resources.GCSBuckets, 1)
+				assert.Equal(t, "global-bucket", cfg.ResourceGroup.Resources.GCSBuckets[0].Name)
 			},
 		},
 		{
-			name: "Valid configuration with GCS only",
+			name: "Valid configuration with dataflow resource",
 			yamlContent: `
-default_project_id: "default-project"
-resources:
-  gcs_buckets:
-    - name: "my-gcs-bucket-only"
+dataflows:
+  - name: my-dataflow
+    resources:
+      topics:
+        - name: "df-topic"
 `,
 			expectError: false,
 			checkConfig: func(t *testing.T, cfg *TopLevelConfig) {
 				require.NotNil(t, cfg)
-				assert.Len(t, cfg.Resources.GCSBuckets, 1)
-				assert.Equal(t, "my-gcs-bucket-only", cfg.Resources.GCSBuckets[0].Name)
-				assert.Empty(t, cfg.Resources.Topics, "Should have no messaging topics")
+				require.Len(t, cfg.Dataflows, 1)
+				require.Len(t, cfg.Dataflows[0].Resources.Topics, 1)
+				assert.Equal(t, "df-topic", cfg.Dataflows[0].Resources.Topics[0].Name)
 			},
 		},
 		{
-			name:          "File not found",
-			yamlContent:   "", // Will use a non-existent path for this test case
+			name:          "No resources defined anywhere",
+			yamlContent:   `default_project_id: "default-project"`,
 			expectError:   true,
-			errorContains: "failed to read config file",
+			errorContains: "no resources are defined",
 		},
 		{
-			name:          "Invalid YAML format",
-			yamlContent:   "default_project_id: project\n  badly_indented: true",
-			expectError:   true,
-			errorContains: "failed to unmarshal YAML",
-		},
-		{
-			name: "Missing default_project_id (warning only)",
+			name: "Global bucket with no name",
 			yamlContent: `
-resources:
-  messaging_topics:
-    - name: "topic-a"
-`,
-			expectError: false, // This is not a fatal error
-			checkConfig: func(t *testing.T, cfg *TopLevelConfig) {
-				require.NotNil(t, cfg)
-				assert.Empty(t, cfg.DefaultProjectID)
-			},
-		},
-		{
-			name: "No resources defined",
-			yamlContent: `
-default_project_id: "project"
-resources: {}
-`,
-			expectError:   true,
-			errorContains: "no resources (e.g., gcs_buckets, messaging_topics) defined",
-		},
-		{
-			name: "GCS bucket missing name",
-			yamlContent: `
-default_project_id: "project"
 resources:
   gcs_buckets:
-    - location: "US"
+    - location: "us-central1"
 `,
 			expectError:   true,
-			errorContains: "gcs_buckets[0] is missing a name",
+			errorContains: "global gcs_buckets[0] is missing a name",
 		},
 		{
-			name: "Valid configuration with multiple resource types",
+			name: "Dataflow bucket with no name",
 			yamlContent: `
-default_project_id: "my-default-gcp-project"
-environments:
-  test:
-    project_id: "my-test-gcp-project"
-resources:
-  messaging_topics:
-    - name: "ingested-device-data"
-  gcs_buckets:
-    - name: "iot-device-archive-bucket"
+dataflows:
+  - name: my-dataflow
+    resources:
+      gcs_buckets:
+        - location: "us-central1"
 `,
-			expectError: false,
-			checkConfig: func(t *testing.T, cfg *TopLevelConfig) {
-				require.NotNil(t, cfg)
-				assert.Equal(t, "my-default-gcp-project", cfg.DefaultProjectID)
-				require.NotNil(t, cfg.Environments["test"])
-				assert.Equal(t, "my-test-gcp-project", cfg.Environments["test"].ProjectID)
-				require.Len(t, cfg.Resources.Topics, 1)
-				assert.Equal(t, "ingested-device-data", cfg.Resources.Topics[0].Name)
-				require.Len(t, cfg.Resources.GCSBuckets, 1)
-				assert.Equal(t, "iot-device-archive-bucket", cfg.Resources.GCSBuckets[0].Name)
-			},
+			expectError:   true,
+			errorContains: "gcs_buckets[0] in dataflow 'my-dataflow' (index 0) is missing a name",
+		},
+		{
+			name:        "File not found",
+			yamlContent: "",
+			expectError: true,
+		},
+		{
+			name:        "Invalid YAML format",
+			yamlContent: `default_project_id: "project": "nested"`,
+			expectError: true,
 		},
 	}
 
@@ -147,12 +116,12 @@ resources:
 			cfg, err := LoadAndValidateConfig(configPath)
 
 			if tc.expectError {
-				require.Error(t, err, "Expected an error but got nil")
+				require.Error(t, err)
 				if tc.errorContains != "" {
-					assert.True(t, strings.Contains(err.Error(), tc.errorContains), "Error message should contain '%s', got '%s'", tc.errorContains, err.Error())
+					assert.True(t, strings.Contains(err.Error(), tc.errorContains), "Expected error to contain '%s', but got '%s'", tc.errorContains, err.Error())
 				}
 			} else {
-				require.NoError(t, err, "Expected no error but got: %v", err)
+				require.NoError(t, err)
 				if tc.checkConfig != nil {
 					tc.checkConfig(t, cfg)
 				}

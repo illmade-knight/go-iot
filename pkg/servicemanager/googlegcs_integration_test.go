@@ -4,13 +4,12 @@ package servicemanager_test
 
 import (
 	"context"
-	"fmt"
-	"github.com/illmade-knight/go-iot/helpers/emulators"
 	"io"
 	"testing"
 	"time"
 
 	"cloud.google.com/go/storage"
+	"github.com/illmade-knight/go-iot/helpers/emulators"
 	"github.com/illmade-knight/go-iot/pkg/servicemanager"
 	"github.com/rs/zerolog"
 	"github.com/stretchr/testify/assert"
@@ -33,32 +32,26 @@ func TestGoogleGCSAdapter_Integration_WithManager(t *testing.T) {
 	client := emulators.GetStorageClient(t, ctx, gceCfg, connection.ClientOptions)
 
 	// --- Configuration ---
+	// Define the resources for the test directly as a struct, instead of parsing YAML.
 	testBucketName := "adapter-test-bucket"
-	testBucketLocation := "us-central1"
-	// NOTE: Versioning is set to false here because the GCS emulator (fs-storage)
-	// does not support bucket versioning and will return an error if it's enabled.
-	yamlContent := fmt.Sprintf(`
-default_project_id: "%s"
-default_location: "%s"
-environments:
-  integration:
-    project_id: "%s"
-    default_labels:
-      environment: "integration-test"
-resources:
-  gcs_buckets:
-    - name: "%s"
-      storage_class: "STANDARD"
-      versioning_enabled: false
-      labels: { "tested_by": "gcs-adapter" }
-      lifecycle_rules:
-        - action: { type: "Delete" }
-          condition: { age_days: 7 }
-`, gcsTestProjectID, testBucketLocation, gcsTestProjectID, testBucketName)
-
-	configFilePath := CreateManagerTestYAMLFile(t, yamlContent)
-	cfg, err := servicemanager.LoadAndValidateConfig(configFilePath)
-	require.NoError(t, err)
+	testResources := servicemanager.ResourcesSpec{
+		GCSBuckets: []servicemanager.GCSBucket{
+			{
+				Name:              testBucketName,
+				StorageClass:      "STANDARD",
+				VersioningEnabled: false, // NOTE: GCS emulator (fs-storage) doesn't support versioning.
+				Labels:            map[string]string{"tested_by": "gcs-adapter"},
+				LifecycleRules: []servicemanager.LifecycleRuleSpec{
+					{
+						Action:    servicemanager.LifecycleActionSpec{Type: "Delete"},
+						Condition: servicemanager.LifecycleConditionSpec{AgeDays: 7},
+					},
+				},
+			},
+		},
+	}
+	defaultLocation := "us-central1"
+	defaultLabels := map[string]string{"environment": "integration-test"}
 
 	// --- Client and Adapter Setup ---
 	// Wrap the real client with our adapter.
@@ -72,7 +65,8 @@ resources:
 
 	// --- Run Setup and Verify ---
 	t.Run("SetupResources_Through_Adapter", func(t *testing.T) {
-		err = manager.Setup(ctx, cfg, "integration")
+		// Call Setup with the new, refactored signature.
+		err = manager.Setup(ctx, gcsTestProjectID, defaultLocation, defaultLabels, testResources)
 		require.NoError(t, err, "StorageManager.Setup through adapter failed")
 
 		// Verify Bucket
@@ -83,12 +77,13 @@ resources:
 		assert.Equal(t, testBucketName, attrs.Name, "Bucket name mismatch")
 		assert.False(t, attrs.VersioningEnabled, "Versioning should be disabled for the test")
 
-		t.Log("Skipping lifecycle rule verification; emulator may not support it.")
+		t.Log("Skipping lifecycle rule verification; emulator may not support it reliably.")
 	})
 
 	// --- Run Teardown and Verify ---
 	t.Run("TeardownResources_Through_Adapter", func(t *testing.T) {
-		err = manager.Teardown(ctx, cfg, "integration")
+		// Call Teardown with the new, refactored signature.
+		err = manager.Teardown(ctx, testResources, false) // teardownProtection is false
 		require.NoError(t, err, "StorageManager.Teardown through adapter failed")
 
 		// Verify Bucket is gone

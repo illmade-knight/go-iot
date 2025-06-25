@@ -42,7 +42,7 @@ func (m *MessagingManager) Setup(ctx context.Context, projectID string, resource
 		return err
 	}
 
-	if err := m.setupSubscriptions(ctx, resources.MessagingSubscriptions); err != nil {
+	if err := m.setupSubscriptions(ctx, resources.Subscriptions); err != nil {
 		return err
 	}
 
@@ -179,7 +179,7 @@ func (m *MessagingManager) Teardown(ctx context.Context, projectID string, resou
 		return fmt.Errorf("teardown protection enabled for this operation")
 	}
 
-	if err := m.teardownSubscriptions(ctx, resources.MessagingSubscriptions); err != nil {
+	if err := m.teardownSubscriptions(ctx, resources.Subscriptions); err != nil {
 		return err
 	}
 	if err := m.teardownTopics(ctx, resources.Topics); err != nil {

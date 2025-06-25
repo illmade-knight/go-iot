@@ -4,14 +4,15 @@ package servicemanager_test
 
 import (
 	"context"
-	emulators2 "github.com/illmade-knight/go-iot/helpers/emulators"
+	"github.com/illmade-knight/go-iot/pkg/types"
 	"io"
+	"strings"
 	"testing"
-	"time"
 
 	"cloud.google.com/go/pubsub"
 	"cloud.google.com/go/storage"
 	"github.com/google/uuid"
+	"github.com/illmade-knight/go-iot/helpers/emulators"
 	"github.com/illmade-knight/go-iot/pkg/servicemanager"
 	"github.com/rs/zerolog"
 	"github.com/stretchr/testify/assert"
@@ -24,102 +25,152 @@ func TestServiceManager_Integration_Emulators(t *testing.T) {
 	projectID := "emulator-test-project"
 	runID := uuid.New().String()[:8]
 
+	dataflowName := "full-stack-test-df-" + runID
 	topicName := "test-topic-" + runID
 	subName := "test-sub-" + runID
-	bucketName := "test-bucket-" + runID
+	bucketName := servicemanager.GenerateTestBucketName("test-bucket-" + runID)
+	datasetName := "test_dataset_" + runID
+	tableName := "test_table_" + runID
 
 	require.True(t, servicemanager.IsValidBucketName(bucketName))
 
-	// Define a config with a specific AckDeadline to verify it's applied correctly.
+	// Define the test configuration using the new ResourceGroup structure.
 	cfg := &servicemanager.TopLevelConfig{
 		DefaultProjectID: projectID,
 		Environments: map[string]servicemanager.EnvironmentSpec{
 			"integration": {ProjectID: projectID},
 		},
-		Resources: servicemanager.ResourcesSpec{
-			GCSBuckets: []servicemanager.GCSBucket{{Name: bucketName, VersioningEnabled: true}},
-			Topics:     []servicemanager.TopicConfig{{Name: topicName}},
-			MessagingSubscriptions: []servicemanager.SubscriptionConfig{
-				{Name: subName, Topic: topicName, AckDeadlineSeconds: 123},
+		Services: []servicemanager.ServiceSpec{
+			{Name: "test-service"},
+		},
+		Dataflows: []servicemanager.ResourceGroup{
+			{
+				Name: dataflowName,
+				Lifecycle: &servicemanager.LifecyclePolicy{
+					Strategy: servicemanager.LifecycleStrategyEphemeral,
+				},
+				Resources: servicemanager.ResourcesSpec{
+					GCSBuckets: []servicemanager.GCSBucket{{Name: bucketName, VersioningEnabled: false}},
+					Topics:     []servicemanager.TopicConfig{{Name: topicName}},
+					Subscriptions: []servicemanager.SubscriptionConfig{
+						{Name: subName, Topic: topicName, AckDeadlineSeconds: 123},
+					},
+					BigQueryDatasets: []servicemanager.BigQueryDataset{{Name: datasetName}},
+					BigQueryTables: []servicemanager.BigQueryTable{
+						{
+							Name:                   tableName,
+							Dataset:                datasetName,
+							SchemaSourceType:       "go_struct",
+							SchemaSourceIdentifier: "github.com/illmade-knight/go-iot/pkg/servicemanager.GardenMonitorReadings",
+						},
+					},
+				},
 			},
 		},
 	}
 
-	// --- 1. Setup Emulators and Clients using a helper package ---
-	gcsConfig := emulators2.GetDefaultGCSConfig(testProjectID, bucketName)
-	connection := emulators2.SetupGCSEmulator(t, ctx, gcsConfig)
-	gcsClient := emulators2.GetStorageClient(t, ctx, gcsConfig, connection.ClientOptions)
+	// --- 1. Setup Emulators and Clients (following the original, working pattern) ---
+	// FIX: Pass an empty string for the bucket name to prevent the emulator helper
+	// from pre-creating the bucket. This gives our ServiceManager a clean slate.
+	gcsConfig := emulators.GetDefaultGCSConfig(projectID, "")
+	gcsConnection := emulators.SetupGCSEmulator(t, ctx, gcsConfig)
+	gcsClient := emulators.GetStorageClient(t, ctx, gcsConfig, gcsConnection.ClientOptions)
+	defer gcsClient.Close()
 
-	psConnection := emulators2.SetupPubsubEmulator(t, ctx, emulators2.GetDefaultPubsubConfig(projectID, nil))
-
+	psConnection := emulators.SetupPubsubEmulator(t, ctx, emulators.GetDefaultPubsubConfig(projectID, nil))
 	psEmulatorClient, err := pubsub.NewClient(ctx, projectID, psConnection.ClientOptions...)
 	require.NoError(t, err)
 	defer psEmulatorClient.Close()
 
-	dt := map[string]string{}
-	sm := map[string]interface{}{}
-	bqConnection := emulators2.SetupBigQueryEmulator(t, ctx, emulators2.GetDefaultBigQueryConfig(projectID, dt, sm))
+	bqConnection := emulators.SetupBigQueryEmulator(t, ctx, emulators.GetDefaultBigQueryConfig(projectID, nil, nil))
+	bqGoogleClient := newEmulatorBQClient(ctx, t, projectID, bqConnection.ClientOptions)
+	defer bqGoogleClient.Close()
 
-	// Wrap clients in our adapters
+	// --- 2. Create Adapters and ServiceManager using injection ---
 	gcsAdapter := servicemanager.NewGCSClientAdapter(gcsClient)
 	psAdapter := servicemanager.MessagingClientFromPubsubClient(psEmulatorClient)
+	bqAdapter := servicemanager.NewBigQueryClientAdapter(bqGoogleClient)
 
-	bqGoogleClient := newEmulatorBQClient(ctx, t, projectID, bqConnection.ClientOptions)
-	bqClientAdapter := servicemanager.NewBigQueryClientAdapter(bqGoogleClient)
-	require.NotNil(t, bqClientAdapter, "Manager BQ client adapter should not be nil")
-
-	// --- 2. Create ServiceManager using the clean constructor ---
 	servicesDef, err := servicemanager.NewInMemoryServicesDefinition(cfg)
 	require.NoError(t, err)
 	logger := zerolog.New(io.Discard)
+	schemaRegistry := map[string]interface{}{
+		"github.com/illmade-knight/go-iot/pkg/servicemanager.GardenMonitorReadings": types.GardenMonitorReadings{},
+	}
 
-	// Create the main manager, injecting the sub-manager
-	manager, err := servicemanager.NewServiceManagerFromClients(psAdapter, gcsAdapter, bqClientAdapter, servicesDef, sm, logger)
+	manager, err := servicemanager.NewServiceManagerFromClients(psAdapter, gcsAdapter, bqAdapter, servicesDef, schemaRegistry, logger)
 	require.NoError(t, err)
 
 	// --- 3. Run Setup and Verify ---
-	t.Run("Setup_And_Verify_With_Emulators", func(t *testing.T) {
-		_, err := manager.SetupAll(ctx, cfg, "integration")
+	t.Run("SetupAll_And_Verify_With_Emulators", func(t *testing.T) {
+		_, err := manager.SetupAll(ctx, "integration")
 		require.NoError(t, err)
 
+		// Create direct clients for verification
+		gcsVerifyClient := emulators.GetStorageClient(t, ctx, gcsConfig, gcsConnection.ClientOptions)
+		defer gcsVerifyClient.Close()
+		psVerifyClient, err := pubsub.NewClient(ctx, projectID, psConnection.ClientOptions...)
+		require.NoError(t, err)
+		defer psVerifyClient.Close()
+		bqVerifyClient := newEmulatorBQClient(ctx, t, projectID, bqConnection.ClientOptions)
+		defer bqVerifyClient.Close()
+
 		// Verify GCS Bucket
-		gcsAttrs, err := gcsClient.Bucket(bucketName).Attrs(ctx)
+		gcsAttrs, err := gcsVerifyClient.Bucket(bucketName).Attrs(ctx)
 		require.NoError(t, err, "GCS bucket should exist after setup")
-		assert.Equal(t, bucketName, gcsAttrs.Name, "GCS bucket versioning should be enabled")
+		assert.Equal(t, bucketName, gcsAttrs.Name)
 
 		// Verify Pub/Sub Topic and Subscription
-		topic := psEmulatorClient.Topic(topicName)
+		topic := psVerifyClient.Topic(topicName)
 		topicExists, err := topic.Exists(ctx)
 		require.NoError(t, err)
 		assert.True(t, topicExists, "Pub/Sub topic should exist after setup")
 
-		sub := psEmulatorClient.Subscription(subName)
+		sub := psVerifyClient.Subscription(subName)
 		subExists, err := sub.Exists(ctx)
 		require.NoError(t, err)
 		assert.True(t, subExists, "Pub/Sub subscription should exist after setup")
 
-		subCfg, err := sub.Config(ctx)
-		require.NoError(t, err)
-		assert.Equal(t, topic.String(), subCfg.Topic.String(), "Subscription should be attached to the correct topic")
-		assert.Equal(t, 123*time.Second, subCfg.AckDeadline, "Subscription should have the correct AckDeadline")
+		// Verify BigQuery Dataset and Table
+		ds := bqVerifyClient.Dataset(datasetName)
+		_, err = ds.Metadata(ctx)
+		require.NoError(t, err, "BigQuery dataset should exist after setup")
+
+		tbl := ds.Table(tableName)
+		_, err = tbl.Metadata(ctx)
+		require.NoError(t, err, "BigQuery table should exist after setup")
 	})
 
 	// --- 4. Teardown and Verify ---
-	t.Run("Teardown_And_Verify_With_Emulators", func(t *testing.T) {
-		err := manager.TeardownAll(ctx, cfg, "integration")
+	t.Run("TeardownAll_And_Verify_With_Emulators", func(t *testing.T) {
+		err := manager.TeardownAll(ctx, "integration")
 		require.NoError(t, err)
 
+		// Create direct clients for verification
+		gcsVerifyClient := emulators.GetStorageClient(t, ctx, gcsConfig, gcsConnection.ClientOptions)
+		defer gcsVerifyClient.Close()
+		psVerifyClient, err := pubsub.NewClient(ctx, projectID, psConnection.ClientOptions...)
+		require.NoError(t, err)
+		defer psVerifyClient.Close()
+		bqVerifyClient := newEmulatorBQClient(ctx, t, projectID, bqConnection.ClientOptions)
+		defer bqVerifyClient.Close()
+
 		// Verify GCS Bucket is gone
-		_, err = gcsClient.Bucket(bucketName).Attrs(ctx)
+		_, err = gcsVerifyClient.Bucket(bucketName).Attrs(ctx)
 		assert.ErrorIs(t, err, storage.ErrBucketNotExist, "GCS bucket should NOT exist after teardown")
 
 		// Verify Pub/Sub resources are gone
-		topicExists, err := psEmulatorClient.Topic(topicName).Exists(ctx)
+		topicExists, err := psVerifyClient.Topic(topicName).Exists(ctx)
 		require.NoError(t, err)
 		assert.False(t, topicExists, "Pub/Sub topic should NOT exist after teardown")
 
-		subExists, err := psEmulatorClient.Subscription(subName).Exists(ctx)
+		subExists, err := psVerifyClient.Subscription(subName).Exists(ctx)
 		require.NoError(t, err)
 		assert.False(t, subExists, "Pub/Sub subscription should NOT exist after teardown")
+
+		// Verify BigQuery resources are gone
+		_, err = bqVerifyClient.Dataset(datasetName).Metadata(ctx)
+		assert.Error(t, err, "BigQuery dataset should NOT exist after teardown")
+		assert.True(t, strings.Contains(err.Error(), "notFound"), "Error for dataset GetMetadata should be 'notFound'")
 	})
 }

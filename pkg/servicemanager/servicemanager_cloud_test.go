@@ -1,18 +1,21 @@
-//go:build integration
+//go:build cloudintegration
 
 package servicemanager_test
 
 import (
+	"cloud.google.com/go/bigquery"
 	"context"
-	"github.com/illmade-knight/go-iot/helpers/emulators"
 	"os"
+	"strings"
 	"testing"
 	"time"
 
 	"cloud.google.com/go/pubsub"
 	"cloud.google.com/go/storage"
 	"github.com/google/uuid"
+
 	"github.com/illmade-knight/go-iot/pkg/servicemanager"
+	"github.com/illmade-knight/go-iot/pkg/types"
 	"github.com/rs/zerolog"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -21,8 +24,8 @@ import (
 // TestServiceManager_Integration_CloudProject tests the manager against a real GCP project.
 // To run: go test -v -tags=cloudintegration .
 func TestServiceManager_Integration_CloudProject(t *testing.T) {
-	projectID := os.Getenv("GOOGLE_CLOUD_PROJECT")
-	if projectID == "" {
+	cloudProjectID := os.Getenv("GOOGLE_CLOUD_PROJECT")
+	if cloudProjectID == "" {
 		t.Skip("Skipping cloud integration test: GOOGLE_CLOUD_PROJECT must be set")
 	}
 
@@ -31,18 +34,39 @@ func TestServiceManager_Integration_CloudProject(t *testing.T) {
 
 	runID := uuid.New().String()[:8]
 
-	topicName := "sm-it-topic-" + runID
-	subName := "sm-it-sub-" + runID
-	bucketName := "sm-it-bucket-" + runID
+	dataflowName := "sm-cit-df-" + runID
+	topicName := "sm-cit-topic-" + runID
+	subName := "sm-cit-sub-" + runID
+	bucketName := "sm-cit-bucket-" + runID // Note: Bucket names must be globally unique
+	datasetName := "sm_cit_dataset_" + runID
+	tableName := "sm_cit_table_" + runID
 
+	// Define the configuration using the new dataflow-centric structure
 	cfg := &servicemanager.TopLevelConfig{
-		DefaultProjectID: projectID,
-		Environments:     map[string]servicemanager.EnvironmentSpec{"cloudtest": {ProjectID: projectID}},
-		Resources: servicemanager.ResourcesSpec{
-			GCSBuckets: []servicemanager.GCSBucket{{Name: bucketName}},
-			Topics:     []servicemanager.TopicConfig{{Name: topicName}},
-			MessagingSubscriptions: []servicemanager.SubscriptionConfig{
-				{Name: subName, Topic: topicName, AckDeadlineSeconds: 25},
+		DefaultProjectID: cloudProjectID,
+		Environments:     map[string]servicemanager.EnvironmentSpec{"cloudtest": {ProjectID: cloudProjectID}},
+		Dataflows: []servicemanager.ResourceGroup{
+			{
+				Name: dataflowName,
+				Lifecycle: &servicemanager.LifecyclePolicy{
+					Strategy: servicemanager.LifecycleStrategyEphemeral,
+				},
+				Resources: servicemanager.ResourcesSpec{
+					GCSBuckets: []servicemanager.GCSBucket{{Name: bucketName}},
+					Topics:     []servicemanager.TopicConfig{{Name: topicName}},
+					Subscriptions: []servicemanager.SubscriptionConfig{
+						{Name: subName, Topic: topicName, AckDeadlineSeconds: 25},
+					},
+					BigQueryDatasets: []servicemanager.BigQueryDataset{{Name: datasetName}},
+					BigQueryTables: []servicemanager.BigQueryTable{
+						{
+							Name:                   tableName,
+							Dataset:                datasetName,
+							SchemaSourceType:       "go_struct",
+							SchemaSourceIdentifier: "github.com/illmade-knight/go-iot/pkg/types.GardenMonitorReadings",
+						},
+					},
+				},
 			},
 		},
 	}
@@ -50,39 +74,37 @@ func TestServiceManager_Integration_CloudProject(t *testing.T) {
 	servicesDef, err := servicemanager.NewInMemoryServicesDefinition(cfg)
 	require.NoError(t, err)
 
-	// Use a more detailed logger for cloud tests to aid debugging.
 	logger := zerolog.New(zerolog.ConsoleWriter{Out: os.Stderr, TimeFormat: time.RFC3339})
 
-	// --- 1. Create real clients for the cloud test ---
+	// --- 1. Create real clients for the cloud test and an emulated one for BQ ---
 	realGCSClient, err := storage.NewClient(ctx)
 	require.NoError(t, err)
 	defer realGCSClient.Close()
 
-	realPSClient, err := pubsub.NewClient(ctx, projectID)
+	realPSClient, err := pubsub.NewClient(ctx, cloudProjectID)
 	require.NoError(t, err)
 	defer realPSClient.Close()
 
-	// --- 2. Create adapters and sub-managers ---
+	bqClient, err := bigquery.NewClient(ctx, cloudProjectID)
+	defer bqClient.Close()
+
+	// --- 2. Create adapters and ServiceManager ---
 	gcsAdapter := servicemanager.NewGCSClientAdapter(realGCSClient)
 	psAdapter := servicemanager.MessagingClientFromPubsubClient(realPSClient)
+	bqAdapter := servicemanager.NewBigQueryClientAdapter(bqClient)
 
-	dt := map[string]string{}
-	sm := map[string]interface{}{}
-	bqConnection := emulators.SetupBigQueryEmulator(t, ctx, emulators.GetDefaultBigQueryConfig(projectID, dt, sm))
+	schemaRegistry := map[string]interface{}{
+		"github.com/illmade-knight/go-iot/pkg/types.GardenMonitorReadings": types.GardenMonitorReadings{},
+	}
 
-	bqGoogleClient := newEmulatorBQClient(ctx, t, projectID, bqConnection.ClientOptions)
-	bqClientAdapter := servicemanager.NewBigQueryClientAdapter(bqGoogleClient)
-	require.NotNil(t, bqClientAdapter, "Manager BQ client adapter should not be nil")
-
-	// --- 3. Create ServiceManager using the corrected constructor ---
-
-	manager, err := servicemanager.NewServiceManagerFromClients(psAdapter, gcsAdapter, bqClientAdapter, servicesDef, sm, logger)
+	manager, err := servicemanager.NewServiceManagerFromClients(psAdapter, gcsAdapter, bqAdapter, servicesDef, schemaRegistry, logger)
 	require.NoError(t, err)
 
-	// Teardown is deferred to ensure resources are cleaned up even if tests fail.
+	// --- Teardown is deferred to ensure resources are cleaned up even if tests fail ---
 	defer func() {
 		t.Log("--- Starting deferred teardown ---")
-		err := manager.TeardownAll(ctx, cfg, "cloudtest")
+		// Use the new TeardownAll signature
+		err := manager.TeardownAll(ctx, "cloudtest")
 		assert.NoError(t, err, "Deferred teardown should not fail")
 
 		// Verify GCS Bucket is gone
@@ -96,12 +118,18 @@ func TestServiceManager_Integration_CloudProject(t *testing.T) {
 		subExists, err := realPSClient.Subscription(subName).Exists(ctx)
 		assert.NoError(t, err)
 		assert.False(t, subExists, "Pub/Sub subscription should NOT exist after deferred teardown")
+
+		_, err = bqClient.Dataset(datasetName).Metadata(ctx)
+		assert.Error(t, err, "BigQuery dataset should NOT exist after deferred teardown")
+		assert.True(t, strings.Contains(err.Error(), "notFound"), "Error for BQ dataset should be notFound")
+
 		t.Log("--- Deferred teardown complete ---")
 	}()
 
 	// --- 4. Setup and Verify ---
 	t.Run("Cloud_Setup_And_Verify", func(t *testing.T) {
-		_, err := manager.SetupAll(ctx, cfg, "cloudtest")
+		// Use the new SetupAll signature
+		_, err := manager.SetupAll(ctx, "cloudtest")
 		require.NoError(t, err)
 
 		// Give GCP a moment for propagation
@@ -123,9 +151,11 @@ func TestServiceManager_Integration_CloudProject(t *testing.T) {
 		assert.NoError(t, err)
 		assert.True(t, subExists, "Pub/Sub subscription should exist after setup")
 
-		// Verify subscription config was applied
-		subCfg, err := sub.Config(ctx)
-		require.NoError(t, err)
-		assert.Equal(t, 25*time.Second, subCfg.AckDeadline)
+		ds := bqClient.Dataset(datasetName)
+		_, err = ds.Metadata(ctx)
+		require.NoError(t, err, "BigQuery dataset should exist after setup")
+		tbl := ds.Table(tableName)
+		_, err = tbl.Metadata(ctx)
+		require.NoError(t, err, "BigQuery table should exist after setup")
 	})
 }

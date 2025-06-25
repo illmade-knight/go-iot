@@ -47,8 +47,10 @@ func GetStorageClient(t *testing.T, ctx context.Context, cfg GCSConfig, opts []o
 		require.NoError(t, gcsClient.Close())
 	})
 
-	err = gcsClient.Bucket(cfg.BaseBucket).Create(ctx, cfg.ProjectID, nil)
-	require.NoError(t, err)
+	if cfg.BaseBucket != "" {
+		err = gcsClient.Bucket(cfg.BaseBucket).Create(ctx, cfg.ProjectID, nil)
+		require.NoError(t, err)
+	}
 
 	return gcsClient
 }

@@ -109,7 +109,7 @@ func getTestMessagingResources() servicemanager.ResourcesSpec {
 			{Name: "test-topic-1"},
 			{Name: "test-topic-2", Labels: map[string]string{"env": "test"}},
 		},
-		MessagingSubscriptions: []servicemanager.SubscriptionConfig{
+		Subscriptions: []servicemanager.SubscriptionConfig{
 			{Name: "test-sub-1", Topic: "test-topic-1", AckDeadlineSeconds: 30, MessageRetention: servicemanager.Duration(10 * time.Minute)},
 		},
 	}
@@ -145,7 +145,7 @@ func TestMessagingManager_Setup_CreateNewResources(t *testing.T) {
 	mockSub1 := new(MockMessagingSubscription)
 	mockClient.On("Subscription", "test-sub-1").Return(mockSub1)
 	mockSub1.On("Exists", ctx).Return(false, nil)
-	mockClient.On("CreateSubscription", ctx, resources.MessagingSubscriptions[0]).Return(mockSub1, nil)
+	mockClient.On("CreateSubscription", ctx, resources.Subscriptions[0]).Return(mockSub1, nil)
 	mockSub1.On("ID").Return("test-sub-1")
 
 	// Act - Call Setup with the new signature

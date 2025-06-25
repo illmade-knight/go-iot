@@ -88,16 +88,16 @@ func NewServiceManagerFromClients(mc MessagingClient, sc StorageClient, bc BQCli
 		return nil, errors.New("services definition cannot be nil")
 	}
 
-	messagingManager, err := NewMessagingManager(mc, logger.With().Str("subcomponent", "MessagingManager").Logger())
+	messagingManager, err := NewMessagingManager(mc, logger)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create Messaging manager: %w", err)
 	}
-	storageManager, err := NewStorageManager(sc, logger.With().Str("subcomponent", "StorageManager").Logger())
+	storageManager, err := NewStorageManager(sc, logger)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create Storage manager: %w", err)
 	}
 
-	bigqueryManager, err := NewBigQueryManager(bc, logger.With().Str("subcomponent", "BigQueryManager").Logger(), schemaRegistry)
+	bigqueryManager, err := NewBigQueryManager(bc, logger, schemaRegistry)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create BigQuery manager: %w", err)
 	}
@@ -121,7 +121,6 @@ func (sm *ServiceManager) SetupAll(ctx context.Context, environment string) (*Pr
 		return nil, fmt.Errorf("failed to get top level config for SetupAll: %w", err)
 	}
 
-	// Aggregate resources from all dataflows
 	allProvResources := &ProvisionedResources{}
 
 	for _, dfSpec := range fullConfig.Dataflows {
@@ -150,11 +149,9 @@ func (sm *ServiceManager) TeardownAll(ctx context.Context, environment string) e
 		return fmt.Errorf("failed to get top level config for TeardownAll: %w", err)
 	}
 
-	// Teardown in reverse order
 	for i := len(fullConfig.Dataflows) - 1; i >= 0; i-- {
 		dfSpec := fullConfig.Dataflows[i]
 		if err := sm.TeardownDataflow(ctx, environment, dfSpec.Name); err != nil {
-			// Log error but continue to attempt tearing down other dataflows
 			sm.logger.Error().Err(err).Str("dataflow", dfSpec.Name).Msg("Failed to teardown dataflow, continuing...")
 		}
 	}
@@ -222,46 +219,43 @@ func (sm *ServiceManager) VerifyDataflow(ctx context.Context, environment string
 }
 
 // initDataflowManager is a helper to DRY up the dataflow manager instantiation.
+// It now correctly uses the managers already held by the ServiceManager.
 func (sm *ServiceManager) initDataflowManager(ctx context.Context, environment, dataflowName string) (*DataflowManager, error) {
-	// Get the specific ResourceGroup
 	targetDataflow, err := sm.servicesDef.GetDataflow(dataflowName)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get dataflow spec '%s': %w", dataflowName, err)
 	}
 
-	// Get the full config to resolve environment-specific settings
 	fullConfig, err := sm.servicesDef.GetTopLevelConfig()
 	if err != nil {
 		return nil, fmt.Errorf("failed to get top-level config: %w", err)
 	}
 
-	// Determine project ID for the environment
 	projectID, err := sm.servicesDef.GetProjectID(environment)
 	if err != nil {
 		return nil, err
 	}
 
-	// Determine defaults from the environment spec
 	var defaultLocation string
 	var defaultLabels map[string]string
 	if envSpec, ok := fullConfig.Environments[environment]; ok {
 		defaultLocation = envSpec.DefaultLocation
 		defaultLabels = envSpec.DefaultLabels
 	}
-	// Fallback to top-level defaults if not in environment spec
 	if defaultLocation == "" {
 		defaultLocation = fullConfig.DefaultLocation
 	}
 
-	// Create and return the DataflowManager
-	return NewDataflowManager(
-		ctx,
+	// FIX: Use NewDataflowManagerFromManagers to pass down the existing, correctly configured managers.
+	return NewDataflowManagerFromManagers(
+		sm.messagingManager,
+		sm.storageManager,
+		sm.bigqueryManager,
 		targetDataflow,
 		projectID,
 		defaultLocation,
 		defaultLabels,
 		environment,
-		sm.schemaRegistry,
 		sm.logger,
 	)
 }

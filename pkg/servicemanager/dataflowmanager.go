@@ -5,7 +5,6 @@ import (
 	"errors"
 	"fmt"
 	"github.com/rs/zerolog"
-	"golang.org/x/sync/errgroup"
 )
 
 // DataflowManager handles the setup, teardown, and verification of resources
@@ -37,7 +36,6 @@ func NewDataflowManager(
 
 	dfLogger := logger.With().Str("component", "DataflowManager").Str("dataflow", dataflowSpec.Name).Logger()
 
-	// Initialize Google Cloud clients for the specific project.
 	msgClient, err := CreateGoogleMessagingClient(ctx, projectID)
 	if err != nil {
 		return nil, fmt.Errorf("dataflowmanager: failed to create Messaging client for dataflow '%s': %w", dataflowSpec.Name, err)
@@ -51,7 +49,6 @@ func NewDataflowManager(
 		return nil, fmt.Errorf("dataflowmanager: failed to create BigQuery client for dataflow '%s': %w", dataflowSpec.Name, err)
 	}
 
-	// Create instances of the specialized resource managers.
 	messagingManager, err := NewMessagingManager(msgClient, dfLogger)
 	if err != nil {
 		return nil, fmt.Errorf("dataflowmanager: failed to create Messaging manager for dataflow '%s': %w", dataflowSpec.Name, err)
@@ -65,7 +62,6 @@ func NewDataflowManager(
 		return nil, fmt.Errorf("dataflowmanager: failed to create BigQuery manager for dataflow '%s': %w", dataflowSpec.Name, err)
 	}
 
-	// Delegate to the manager-based constructor.
 	return NewDataflowManagerFromManagers(
 		messagingManager,
 		storageManager,
@@ -96,7 +92,6 @@ func NewDataflowManagerFromManagers(
 		return nil, errors.New("all managers (Messaging, Storage, BigQuery) must be non-nil")
 	}
 
-	// Return the new DataflowManager instance.
 	return &DataflowManager{
 		messagingManager: messagingManager,
 		storageManager:   storageManager,
@@ -111,44 +106,25 @@ func NewDataflowManagerFromManagers(
 }
 
 // Verify checks if all resources required by this dataflow exist and have compatible configurations.
+// The checks are now run sequentially to simplify context management.
 func (dfm *DataflowManager) Verify(ctx context.Context) error {
 	dfm.logger.Info().Msg("Starting dataflow resource verification...")
-	g, gCtx := errgroup.WithContext(ctx)
 	resources := dfm.dataflowSpec.Resources
 
-	// Verify Messaging resources
-	g.Go(func() error {
-		if err := dfm.messagingManager.VerifyTopics(gCtx, resources.Topics); err != nil {
-			return fmt.Errorf("messaging topic verification failed: %w", err)
-		}
-		if err := dfm.messagingManager.VerifySubscriptions(gCtx, resources.MessagingSubscriptions); err != nil {
-			return fmt.Errorf("messaging subscription verification failed: %w", err)
-		}
-		return nil
-	})
-
-	// Verify Storage resources
-	g.Go(func() error {
-		if err := dfm.storageManager.VerifyBuckets(gCtx, resources.GCSBuckets); err != nil {
-			return fmt.Errorf("GCS bucket verification failed: %w", err)
-		}
-		return nil
-	})
-
-	// Verify BigQuery resources
-	g.Go(func() error {
-		if err := dfm.bigqueryManager.VerifyDatasets(gCtx, resources.BigQueryDatasets); err != nil {
-			return fmt.Errorf("BigQuery dataset verification failed: %w", err)
-		}
-		if err := dfm.bigqueryManager.VerifyTables(gCtx, resources.BigQueryTables); err != nil {
-			return fmt.Errorf("BigQuery table verification failed: %w", err)
-		}
-		return nil
-	})
-
-	if err := g.Wait(); err != nil {
-		dfm.logger.Error().Err(err).Msg("Dataflow resource verification failed.")
-		return err
+	if err := dfm.messagingManager.VerifyTopics(ctx, resources.Topics); err != nil {
+		return fmt.Errorf("messaging topic verification failed: %w", err)
+	}
+	if err := dfm.messagingManager.VerifySubscriptions(ctx, resources.Subscriptions); err != nil {
+		return fmt.Errorf("messaging subscription verification failed: %w", err)
+	}
+	if err := dfm.storageManager.VerifyBuckets(ctx, resources.GCSBuckets); err != nil {
+		return fmt.Errorf("GCS bucket verification failed: %w", err)
+	}
+	if err := dfm.bigqueryManager.VerifyDatasets(ctx, resources.BigQueryDatasets); err != nil {
+		return fmt.Errorf("BigQuery dataset verification failed: %w", err)
+	}
+	if err := dfm.bigqueryManager.VerifyTables(ctx, resources.BigQueryTables); err != nil {
+		return fmt.Errorf("BigQuery table verification failed: %w", err)
 	}
 
 	dfm.logger.Info().Msg("Dataflow resource verification completed successfully.")
@@ -156,33 +132,26 @@ func (dfm *DataflowManager) Verify(ctx context.Context) error {
 }
 
 // Setup creates all resources for this specific dataflow.
-// It now calls the simplified Setup methods on the underlying managers.
+// It now calls the Setup methods on the underlying managers sequentially.
 func (dfm *DataflowManager) Setup(ctx context.Context) (*ProvisionedResources, error) {
 	dfm.logger.Info().Msg("Starting dataflow-specific setup...")
-
-	g, gCtx := errgroup.WithContext(ctx)
 	resources := dfm.dataflowSpec.Resources
 
-	g.Go(func() error {
-		return dfm.messagingManager.Setup(gCtx, dfm.projectID, resources)
-	})
-	g.Go(func() error {
-		return dfm.storageManager.Setup(gCtx, dfm.projectID, dfm.defaultLocation, dfm.defaultLabels, resources)
-	})
-	g.Go(func() error {
-		return dfm.bigqueryManager.Setup(gCtx, dfm.projectID, dfm.defaultLocation, resources)
-	})
-
-	if err := g.Wait(); err != nil {
-		return nil, fmt.Errorf("failed during parallel dataflow setup: %w", err)
+	if err := dfm.messagingManager.Setup(ctx, dfm.projectID, resources); err != nil {
+		return nil, fmt.Errorf("failed during messaging setup: %w", err)
+	}
+	if err := dfm.storageManager.Setup(ctx, dfm.projectID, dfm.defaultLocation, dfm.defaultLabels, resources); err != nil {
+		return nil, fmt.Errorf("failed during storage setup: %w", err)
+	}
+	if err := dfm.bigqueryManager.Setup(ctx, dfm.projectID, dfm.defaultLocation, resources); err != nil {
+		return nil, fmt.Errorf("failed during bigquery setup: %w", err)
 	}
 
-	// Populate and return ProvisionedResources based on the dataflow's configured resources.
 	provResources := &ProvisionedResources{}
 	for _, topic := range resources.Topics {
 		provResources.Topics = append(provResources.Topics, ProvisionedTopic{Name: topic.Name, ProducerService: topic.ProducerService})
 	}
-	for _, sub := range resources.MessagingSubscriptions {
+	for _, sub := range resources.Subscriptions {
 		provResources.Subscriptions = append(provResources.Subscriptions, ProvisionedSubscription{Name: sub.Name, Topic: sub.Topic})
 	}
 	for _, bucket := range resources.GCSBuckets {
@@ -200,10 +169,8 @@ func (dfm *DataflowManager) Setup(ctx context.Context) (*ProvisionedResources, e
 }
 
 // Teardown deletes resources for this specific dataflow.
-// It now calls the simplified Teardown methods on the underlying managers.
 func (dfm *DataflowManager) Teardown(ctx context.Context, teardownProtection bool) error {
 	dfm.logger.Info().Msg("Starting dataflow-specific teardown...")
-
 	resources := dfm.dataflowSpec.Resources
 
 	// Teardown sequentially to respect dependencies.

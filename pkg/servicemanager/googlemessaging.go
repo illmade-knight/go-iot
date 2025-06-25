@@ -181,7 +181,7 @@ func (a *gcpMessagingClientAdapter) Close() error { return a.client.Close() }
 
 // Validate checks the resource configuration against Google Pub/Sub specific rules.
 func (a *gcpMessagingClientAdapter) Validate(resources ResourcesSpec) error {
-	for _, sub := range resources.MessagingSubscriptions {
+	for _, sub := range resources.Subscriptions {
 		// If AckDeadlineSeconds is set, it must be within the allowed range.
 		if sub.AckDeadlineSeconds != 0 {
 			ackDuration := time.Duration(sub.AckDeadlineSeconds) * time.Second
