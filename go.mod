@@ -11,7 +11,6 @@ require (
 	github.com/docker/go-connections v0.5.0
 	github.com/eclipse/paho.mqtt.golang v1.5.0
 	github.com/go-redis/redis/v8 v8.11.5
-	github.com/go-redis/redismock/v8 v8.11.5
 	github.com/google/uuid v1.6.0
 	github.com/rs/zerolog v1.34.0
 	github.com/stretchr/testify v1.10.0

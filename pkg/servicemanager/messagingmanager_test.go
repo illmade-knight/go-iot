@@ -29,12 +29,12 @@ func (m *MockMessagingTopic) Exists(ctx context.Context) (bool, error) {
 	args := m.Called(ctx)
 	return args.Bool(0), args.Error(1)
 }
-func (m *MockMessagingTopic) Update(ctx context.Context, cfg servicemanager.MessagingTopicConfig) (*servicemanager.MessagingTopicConfig, error) {
+func (m *MockMessagingTopic) Update(ctx context.Context, cfg servicemanager.TopicConfig) (*servicemanager.TopicConfig, error) {
 	args := m.Called(ctx, cfg)
 	if args.Get(0) == nil {
 		return nil, args.Error(1)
 	}
-	return args.Get(0).(*servicemanager.MessagingTopicConfig), args.Error(1)
+	return args.Get(0).(*servicemanager.TopicConfig), args.Error(1)
 }
 func (m *MockMessagingTopic) Delete(ctx context.Context) error {
 	args := m.Called(ctx)
@@ -53,12 +53,12 @@ func (m *MockMessagingSubscription) Exists(ctx context.Context) (bool, error) {
 	args := m.Called(ctx)
 	return args.Bool(0), args.Error(1)
 }
-func (m *MockMessagingSubscription) Update(ctx context.Context, cfg servicemanager.MessagingSubscriptionConfig) (*servicemanager.MessagingSubscriptionConfig, error) {
+func (m *MockMessagingSubscription) Update(ctx context.Context, cfg servicemanager.SubscriptionConfig) (*servicemanager.SubscriptionConfig, error) {
 	args := m.Called(ctx, cfg)
 	if args.Get(0) == nil {
 		return nil, args.Error(1)
 	}
-	return args.Get(0).(*servicemanager.MessagingSubscriptionConfig), args.Error(1)
+	return args.Get(0).(*servicemanager.SubscriptionConfig), args.Error(1)
 }
 func (m *MockMessagingSubscription) Delete(ctx context.Context) error {
 	args := m.Called(ctx)
@@ -81,11 +81,11 @@ func (m *MockMessagingClient) CreateTopic(ctx context.Context, topicID string) (
 	args := m.Called(ctx, topicID)
 	return args.Get(0).(servicemanager.MessagingTopic), args.Error(1)
 }
-func (m *MockMessagingClient) CreateTopicWithConfig(ctx context.Context, topicSpec servicemanager.MessagingTopicConfig) (servicemanager.MessagingTopic, error) {
+func (m *MockMessagingClient) CreateTopicWithConfig(ctx context.Context, topicSpec servicemanager.TopicConfig) (servicemanager.MessagingTopic, error) {
 	args := m.Called(ctx, topicSpec)
 	return args.Get(0).(servicemanager.MessagingTopic), args.Error(1)
 }
-func (m *MockMessagingClient) CreateSubscription(ctx context.Context, subSpec servicemanager.MessagingSubscriptionConfig) (servicemanager.MessagingSubscription, error) {
+func (m *MockMessagingClient) CreateSubscription(ctx context.Context, subSpec servicemanager.SubscriptionConfig) (servicemanager.MessagingSubscription, error) {
 	args := m.Called(ctx, subSpec)
 	if args.Get(0) == nil {
 		return nil, args.Error(1)
@@ -113,11 +113,11 @@ func getTestMessagingConfig() *servicemanager.TopLevelConfig {
 			"prod": {ProjectID: "prod-project", TeardownProtection: true},
 		},
 		Resources: servicemanager.ResourcesSpec{
-			MessagingTopics: []servicemanager.MessagingTopicConfig{
+			Topics: []servicemanager.TopicConfig{
 				{Name: "test-topic-1"},
 				{Name: "test-topic-2", Labels: map[string]string{"env": "test"}},
 			},
-			MessagingSubscriptions: []servicemanager.MessagingSubscriptionConfig{
+			MessagingSubscriptions: []servicemanager.SubscriptionConfig{
 				{Name: "test-sub-1", Topic: "test-topic-1", AckDeadlineSeconds: 30, MessageRetention: servicemanager.Duration(10 * time.Minute)},
 			},
 		},
@@ -148,7 +148,7 @@ func TestPubSubManager_Setup_CreateNewResources(t *testing.T) {
 	mockTopic2 := new(MockMessagingTopic)
 	mockClient.On("Topic", "test-topic-2").Return(mockTopic2)
 	mockTopic2.On("Exists", ctx).Return(false, nil)
-	mockClient.On("CreateTopicWithConfig", ctx, config.Resources.MessagingTopics[1]).Return(mockTopic2, nil)
+	mockClient.On("CreateTopicWithConfig", ctx, config.Resources.Topics[1]).Return(mockTopic2, nil)
 	mockTopic2.On("ID").Return("test-topic-2")
 
 	mockSub1 := new(MockMessagingSubscription)

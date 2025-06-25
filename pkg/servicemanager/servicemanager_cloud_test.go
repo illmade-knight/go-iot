@@ -39,9 +39,9 @@ func TestServiceManager_Integration_CloudProject(t *testing.T) {
 		DefaultProjectID: projectID,
 		Environments:     map[string]servicemanager.EnvironmentSpec{"cloudtest": {ProjectID: projectID}},
 		Resources: servicemanager.ResourcesSpec{
-			GCSBuckets:      []servicemanager.GCSBucket{{Name: bucketName}},
-			MessagingTopics: []servicemanager.MessagingTopicConfig{{Name: topicName}},
-			MessagingSubscriptions: []servicemanager.MessagingSubscriptionConfig{
+			GCSBuckets: []servicemanager.GCSBucket{{Name: bucketName}},
+			Topics:     []servicemanager.TopicConfig{{Name: topicName}},
+			MessagingSubscriptions: []servicemanager.SubscriptionConfig{
 				{Name: subName, Topic: topicName, AckDeadlineSeconds: 25},
 			},
 		},

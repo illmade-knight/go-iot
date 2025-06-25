@@ -24,10 +24,10 @@ func getTestConfig() *servicemanager.TopLevelConfig {
 			"test": {ProjectID: "test-project"},
 		},
 		Resources: servicemanager.ResourcesSpec{
-			MessagingTopics: []servicemanager.MessagingTopicConfig{
+			Topics: []servicemanager.TopicConfig{
 				{Name: "topic1", ProducerService: "service-a"},
 			},
-			MessagingSubscriptions: []servicemanager.MessagingSubscriptionConfig{}, // Ensure it's not nil
+			MessagingSubscriptions: []servicemanager.SubscriptionConfig{}, // Ensure it's not nil
 			GCSBuckets: []servicemanager.GCSBucket{
 				{Name: "bucket1", AccessingServices: []string{"service-a"}},
 			},
@@ -137,7 +137,7 @@ func TestServiceManager_SetupAll(t *testing.T) {
 		// Assert
 		require.NoError(t, err)
 		require.NotNil(t, provResources)
-		assert.Len(t, provResources.PubSubTopics, 1)
+		assert.Len(t, provResources.Topics, 1)
 		assert.Len(t, provResources.GCSBuckets, 1)
 		assert.Len(t, provResources.BigQueryDatasets, 1)
 		assert.Len(t, provResources.BigQueryTables, 1)
@@ -235,7 +235,7 @@ func TestServiceManager_SetupDataflow(t *testing.T) {
 
 		// Assert
 		require.NoError(t, err)
-		assert.Len(t, provResources.PubSubTopics, 1, "Should set up topic for service-a")
+		assert.Len(t, provResources.Topics, 1, "Should set up topic for service-a")
 		assert.Len(t, provResources.GCSBuckets, 1, "Should set up bucket for service-a")
 		assert.Empty(t, provResources.BigQueryTables, "Should NOT set up BQ table for service-a")
 		assert.Empty(t, provResources.BigQueryDatasets, "Should NOT set up BQ dataset for service-a")
@@ -277,7 +277,7 @@ func TestServiceManager_SetupDataflow(t *testing.T) {
 
 		// Assert
 		require.NoError(t, err)
-		assert.Empty(t, provResources.PubSubTopics, "Should NOT set up topics for service-b")
+		assert.Empty(t, provResources.Topics, "Should NOT set up topics for service-b")
 		assert.Empty(t, provResources.GCSBuckets, "Should NOT set up buckets for service-b")
 		assert.Len(t, provResources.BigQueryDatasets, 1, "Should set up dataset for service-b")
 		assert.Len(t, provResources.BigQueryTables, 1, "Should set up table for service-b")

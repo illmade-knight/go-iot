@@ -72,22 +72,22 @@ type LifecyclePolicy struct {
 
 // ResourcesSpec is a container for all the cloud resources defined in the system.
 type ResourcesSpec struct {
-	MessagingTopics        []MessagingTopicConfig        `yaml:"messaging_topics"`
-	MessagingSubscriptions []MessagingSubscriptionConfig `yaml:"messaging_subscriptions"`
-	BigQueryDatasets       []BigQueryDataset             `yaml:"bigquery_datasets"`
-	BigQueryTables         []BigQueryTable               `yaml:"bigquery_tables"`
-	GCSBuckets             []GCSBucket                   `yaml:"gcs_buckets"`
+	Topics                 []TopicConfig        `yaml:"topics"`
+	MessagingSubscriptions []SubscriptionConfig `yaml:"subscriptions"`
+	BigQueryDatasets       []BigQueryDataset    `yaml:"bigquery_datasets"`
+	BigQueryTables         []BigQueryTable      `yaml:"bigquery_tables"`
+	GCSBuckets             []GCSBucket          `yaml:"gcs_buckets"`
 }
 
-// MessagingTopicConfig defines the configuration for a Pub/Sub topic.
-type MessagingTopicConfig struct {
+// TopicConfig defines the configuration for a Pub/Sub topic.
+type TopicConfig struct {
 	Name            string            `yaml:"name"`
 	Labels          map[string]string `yaml:"labels,omitempty"`
 	ProducerService string            `yaml:"producer_service,omitempty"`
 }
 
-// MessagingSubscriptionConfig defines the configuration for a Pub/Sub subscription.
-type MessagingSubscriptionConfig struct {
+// SubscriptionConfig defines the configuration for a Pub/Sub subscription.
+type SubscriptionConfig struct {
 	Name               string            `yaml:"name"`
 	Topic              string            `yaml:"topic"`
 	AckDeadlineSeconds int               `yaml:"ack_deadline_seconds,omitempty"`

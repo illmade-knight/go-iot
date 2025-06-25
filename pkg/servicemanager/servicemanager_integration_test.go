@@ -37,9 +37,9 @@ func TestServiceManager_Integration_Emulators(t *testing.T) {
 			"integration": {ProjectID: projectID},
 		},
 		Resources: servicemanager.ResourcesSpec{
-			GCSBuckets:      []servicemanager.GCSBucket{{Name: bucketName, VersioningEnabled: true}},
-			MessagingTopics: []servicemanager.MessagingTopicConfig{{Name: topicName}},
-			MessagingSubscriptions: []servicemanager.MessagingSubscriptionConfig{
+			GCSBuckets: []servicemanager.GCSBucket{{Name: bucketName, VersioningEnabled: true}},
+			Topics:     []servicemanager.TopicConfig{{Name: topicName}},
+			MessagingSubscriptions: []servicemanager.SubscriptionConfig{
 				{Name: subName, Topic: topicName, AckDeadlineSeconds: 123},
 			},
 		},

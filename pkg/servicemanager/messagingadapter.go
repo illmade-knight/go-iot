@@ -11,7 +11,7 @@ import (
 type MessagingTopic interface {
 	ID() string
 	Exists(ctx context.Context) (bool, error)
-	Update(ctx context.Context, cfg MessagingTopicConfig) (*MessagingTopicConfig, error)
+	Update(ctx context.Context, cfg TopicConfig) (*TopicConfig, error)
 	Delete(ctx context.Context) error
 }
 
@@ -20,7 +20,7 @@ type MessagingTopic interface {
 type MessagingSubscription interface {
 	ID() string
 	Exists(ctx context.Context) (bool, error)
-	Update(ctx context.Context, cfg MessagingSubscriptionConfig) (*MessagingSubscriptionConfig, error)
+	Update(ctx context.Context, cfg SubscriptionConfig) (*SubscriptionConfig, error)
 	Delete(ctx context.Context) error
 }
 
@@ -29,13 +29,13 @@ type MessagingClient interface {
 	Topic(id string) MessagingTopic
 	Subscription(id string) MessagingSubscription
 	CreateTopic(ctx context.Context, topicID string) (MessagingTopic, error)
-	// CreateTopicWithConfig now accepts our generic MessagingTopicConfig spec.
-	CreateTopicWithConfig(ctx context.Context, topicSpec MessagingTopicConfig) (MessagingTopic, error)
-	// CreateSubscription already correctly uses our generic MessagingSubscriptionConfig spec.
-	CreateSubscription(ctx context.Context, subSpec MessagingSubscriptionConfig) (MessagingSubscription, error)
+	// CreateTopicWithConfig now accepts our generic TopicConfig spec.
+	CreateTopicWithConfig(ctx context.Context, topicSpec TopicConfig) (MessagingTopic, error)
+	// CreateSubscription already correctly uses our generic SubscriptionConfig spec.
+	CreateSubscription(ctx context.Context, subSpec SubscriptionConfig) (MessagingSubscription, error)
 	Close() error
 	// Validate checks if the resource configuration is valid for the specific implementation.
 	Validate(resources ResourcesSpec) error
 	// Check if we need to be able to access this generally or only in specific adapters
-	//Config(ctx context.Context) (*MessagingSubscriptionConfig, error)
+	//Config(ctx context.Context) (*SubscriptionConfig, error)
 }

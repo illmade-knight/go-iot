@@ -30,7 +30,7 @@ func LoadAndValidateConfig(configPath string) (*TopLevelConfig, error) {
 
 	// Check if at least one resource is defined.
 	if len(config.Resources.GCSBuckets) == 0 &&
-		len(config.Resources.MessagingTopics) == 0 &&
+		len(config.Resources.Topics) == 0 &&
 		len(config.Resources.MessagingSubscriptions) == 0 &&
 		len(config.Resources.BigQueryDatasets) == 0 &&
 		len(config.Resources.BigQueryTables) == 0 {

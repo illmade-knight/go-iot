@@ -9,13 +9,14 @@ import (
 	"golang.org/x/sync/errgroup"
 )
 
-// ProvisionedMessagingTopic holds details of a created Pub/Sub topic.
-type ProvisionedMessagingTopic struct {
-	Name string
+// ProvisionedTopic holds details of a created topic.
+type ProvisionedTopic struct {
+	Name            string
+	ProducerService string
 }
 
-// ProvisionedMessagingSubscription holds details of a created Pub/Sub subscription.
-type ProvisionedMessagingSubscription struct {
+// ProvisionedSubscription holds details of a created Pub/Sub subscription.
+type ProvisionedSubscription struct {
 	Name  string
 	Topic string
 }
@@ -38,11 +39,11 @@ type ProvisionedBigQueryTable struct {
 
 // ProvisionedResources contains the details of all resources created by a setup operation.
 type ProvisionedResources struct {
-	PubSubTopics        []ProvisionedMessagingTopic
-	PubSubSubscriptions []ProvisionedMessagingSubscription
-	GCSBuckets          []ProvisionedGCSBucket
-	BigQueryDatasets    []ProvisionedBigQueryDataset
-	BigQueryTables      []ProvisionedBigQueryTable
+	Topics           []ProvisionedTopic
+	Subscriptions    []ProvisionedSubscription
+	GCSBuckets       []ProvisionedGCSBucket
+	BigQueryDatasets []ProvisionedBigQueryDataset
+	BigQueryTables   []ProvisionedBigQueryTable
 }
 
 // ServiceManager coordinates all resource-specific operations by delegating to specialized managers.
@@ -134,11 +135,11 @@ func (sm *ServiceManager) SetupAll(ctx context.Context, cfg *TopLevelConfig, env
 	}
 
 	provResources := &ProvisionedResources{}
-	for _, topic := range cfg.Resources.MessagingTopics {
-		provResources.PubSubTopics = append(provResources.PubSubTopics, ProvisionedMessagingTopic{Name: topic.Name})
+	for _, topic := range cfg.Resources.Topics {
+		provResources.Topics = append(provResources.Topics, ProvisionedTopic{Name: topic.Name, ProducerService: topic.ProducerService})
 	}
 	for _, sub := range cfg.Resources.MessagingSubscriptions {
-		provResources.PubSubSubscriptions = append(provResources.PubSubSubscriptions, ProvisionedMessagingSubscription{Name: sub.Name, Topic: sub.Topic})
+		provResources.Subscriptions = append(provResources.Subscriptions, ProvisionedSubscription{Name: sub.Name, Topic: sub.Topic})
 	}
 	for _, bucket := range cfg.Resources.GCSBuckets {
 		provResources.GCSBuckets = append(provResources.GCSBuckets, ProvisionedGCSBucket{Name: bucket.Name})
@@ -245,9 +246,9 @@ func (sm *ServiceManager) filterConfigForServices(fullConfig *TopLevelConfig, se
 		Resources:        ResourcesSpec{},
 	}
 
-	for _, topic := range fullConfig.Resources.MessagingTopics {
+	for _, topic := range fullConfig.Resources.Topics {
 		if _, ok := serviceSet[topic.ProducerService]; ok {
-			dataflowConfig.Resources.MessagingTopics = append(dataflowConfig.Resources.MessagingTopics, topic)
+			dataflowConfig.Resources.Topics = append(dataflowConfig.Resources.Topics, topic)
 		}
 	}
 	for _, sub := range fullConfig.Resources.MessagingSubscriptions {

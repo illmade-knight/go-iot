@@ -19,15 +19,15 @@ const (
 
 // --- Conversion Helpers ---
 
-func fromGCPTopicConfig(t *pubsub.TopicConfig) *MessagingTopicConfig {
-	return &MessagingTopicConfig{
+func fromGCPTopicConfig(t *pubsub.TopicConfig) *TopicConfig {
+	return &TopicConfig{
 		Name:   t.ID(),
 		Labels: t.Labels,
 	}
 }
 
-func fromGCPSubscriptionConfig(s *pubsub.SubscriptionConfig) *MessagingSubscriptionConfig {
-	spec := &MessagingSubscriptionConfig{
+func fromGCPSubscriptionConfig(s *pubsub.SubscriptionConfig) *SubscriptionConfig {
+	spec := &SubscriptionConfig{
 		Name:               s.ID(),
 		Topic:              s.Topic.ID(),
 		Labels:             s.Labels,
@@ -44,7 +44,7 @@ type gcpTopicAdapter struct{ topic *pubsub.Topic }
 
 func (a *gcpTopicAdapter) ID() string                               { return a.topic.ID() }
 func (a *gcpTopicAdapter) Exists(ctx context.Context) (bool, error) { return a.topic.Exists(ctx) }
-func (a *gcpTopicAdapter) Update(ctx context.Context, cfg MessagingTopicConfig) (*MessagingTopicConfig, error) {
+func (a *gcpTopicAdapter) Update(ctx context.Context, cfg TopicConfig) (*TopicConfig, error) {
 	gcpUpdate := pubsub.TopicConfigToUpdate{
 		Labels: cfg.Labels,
 	}
@@ -62,7 +62,7 @@ func (a *gcpSubscriptionAdapter) ID() string                               { ret
 func (a *gcpSubscriptionAdapter) Exists(ctx context.Context) (bool, error) { return a.sub.Exists(ctx) }
 
 // Update contains the "fetch, compare, execute" logic, specific to Google Pub/Sub.
-func (a *gcpSubscriptionAdapter) Update(ctx context.Context, spec MessagingSubscriptionConfig) (*MessagingSubscriptionConfig, error) {
+func (a *gcpSubscriptionAdapter) Update(ctx context.Context, spec SubscriptionConfig) (*SubscriptionConfig, error) {
 	currentGcpCfg, err := a.sub.Config(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get current config for subscription '%s': %w", spec.Name, err)
@@ -135,7 +135,7 @@ func (a *gcpMessagingClientAdapter) CreateTopic(ctx context.Context, topicID str
 	}
 	return &gcpTopicAdapter{topic: t}, nil
 }
-func (a *gcpMessagingClientAdapter) CreateTopicWithConfig(ctx context.Context, topicSpec MessagingTopicConfig) (MessagingTopic, error) {
+func (a *gcpMessagingClientAdapter) CreateTopicWithConfig(ctx context.Context, topicSpec TopicConfig) (MessagingTopic, error) {
 	gcpConfig := &pubsub.TopicConfig{
 		Labels: topicSpec.Labels,
 	}
@@ -146,7 +146,7 @@ func (a *gcpMessagingClientAdapter) CreateTopicWithConfig(ctx context.Context, t
 	return &gcpTopicAdapter{topic: t}, nil
 }
 
-func (a *gcpMessagingClientAdapter) CreateSubscription(ctx context.Context, subSpec MessagingSubscriptionConfig) (MessagingSubscription, error) {
+func (a *gcpMessagingClientAdapter) CreateSubscription(ctx context.Context, subSpec SubscriptionConfig) (MessagingSubscription, error) {
 	topic := a.client.Topic(subSpec.Topic)
 	topicExists, err := topic.Exists(ctx)
 	if err != nil {
@@ -207,7 +207,7 @@ func (a *gcpMessagingClientAdapter) Validate(resources ResourcesSpec) error {
 }
 
 // Config fetches the current configuration of the subscription.
-func (a *gcpSubscriptionAdapter) Config(ctx context.Context) (*MessagingSubscriptionConfig, error) {
+func (a *gcpSubscriptionAdapter) Config(ctx context.Context) (*SubscriptionConfig, error) {
 	gcpConfig, err := a.sub.Config(ctx)
 	if err != nil {
 		return nil, err

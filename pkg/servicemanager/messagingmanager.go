@@ -54,7 +54,7 @@ func (m *MessagingManager) Setup(ctx context.Context, cfg *TopLevelConfig, envir
 	}
 	m.logger.Info().Msg("Resource configuration is valid")
 
-	if err := m.setupTopics(ctx, cfg.Resources.MessagingTopics); err != nil {
+	if err := m.setupTopics(ctx, cfg.Resources.Topics); err != nil {
 		return err
 	}
 
@@ -67,7 +67,7 @@ func (m *MessagingManager) Setup(ctx context.Context, cfg *TopLevelConfig, envir
 }
 
 // setupTopics is now fully generic and has the corrected update logic.
-func (m *MessagingManager) setupTopics(ctx context.Context, topicsToCreate []MessagingTopicConfig) error {
+func (m *MessagingManager) setupTopics(ctx context.Context, topicsToCreate []TopicConfig) error {
 	m.logger.Info().Int("count", len(topicsToCreate)).Msg("Setting up Pub/Sub topics...")
 	for _, topicSpec := range topicsToCreate {
 		if topicSpec.Name == "" {
@@ -81,7 +81,7 @@ func (m *MessagingManager) setupTopics(ctx context.Context, topicsToCreate []Mes
 		}
 		if exists {
 			m.logger.Info().Str("topic_id", topicSpec.Name).Msg("Topic already exists, ensuring configuration is in sync")
-			updateCfg := MessagingTopicConfig{
+			updateCfg := TopicConfig{
 				Labels: topicSpec.Labels,
 			}
 			// *** FIX: Return the error if the update fails ***
@@ -109,7 +109,7 @@ func (m *MessagingManager) setupTopics(ctx context.Context, topicsToCreate []Mes
 }
 
 // setupSubscriptions is now fully generic.
-func (m *MessagingManager) setupSubscriptions(ctx context.Context, subsToCreate []MessagingSubscriptionConfig) error {
+func (m *MessagingManager) setupSubscriptions(ctx context.Context, subsToCreate []SubscriptionConfig) error {
 	m.logger.Info().Int("count", len(subsToCreate)).Msg("Setting up Pub/Sub subscriptions...")
 	for _, subSpec := range subsToCreate {
 		if subSpec.Name == "" || subSpec.Topic == "" {
@@ -125,7 +125,7 @@ func (m *MessagingManager) setupSubscriptions(ctx context.Context, subsToCreate 
 
 		if exists {
 			m.logger.Info().Str("subscription_id", subSpec.Name).Msg("Subscription already exists, ensuring configuration")
-			updateCfg := MessagingSubscriptionConfig{
+			updateCfg := SubscriptionConfig{
 				AckDeadlineSeconds: subSpec.AckDeadlineSeconds,
 				Labels:             subSpec.Labels,
 				MessageRetention:   subSpec.MessageRetention,
@@ -162,7 +162,7 @@ func (m *MessagingManager) Teardown(ctx context.Context, cfg *TopLevelConfig, en
 	if err := m.teardownSubscriptions(ctx, cfg.Resources.MessagingSubscriptions); err != nil {
 		return err
 	}
-	if err := m.teardownTopics(ctx, cfg.Resources.MessagingTopics); err != nil {
+	if err := m.teardownTopics(ctx, cfg.Resources.Topics); err != nil {
 		return err
 	}
 
@@ -170,7 +170,7 @@ func (m *MessagingManager) Teardown(ctx context.Context, cfg *TopLevelConfig, en
 	return nil
 }
 
-func (m *MessagingManager) teardownSubscriptions(ctx context.Context, subsToTeardown []MessagingSubscriptionConfig) error {
+func (m *MessagingManager) teardownSubscriptions(ctx context.Context, subsToTeardown []SubscriptionConfig) error {
 	m.logger.Info().Int("count", len(subsToTeardown)).Msg("Tearing down Pub/Sub subscriptions...")
 	for i := len(subsToTeardown) - 1; i >= 0; i-- {
 		subSpec := subsToTeardown[i]
@@ -192,7 +192,7 @@ func (m *MessagingManager) teardownSubscriptions(ctx context.Context, subsToTear
 	return nil
 }
 
-func (m *MessagingManager) teardownTopics(ctx context.Context, topicsToTeardown []MessagingTopicConfig) error {
+func (m *MessagingManager) teardownTopics(ctx context.Context, topicsToTeardown []TopicConfig) error {
 	m.logger.Info().Int("count", len(topicsToTeardown)).Msg("Tearing down Pub/Sub topics...")
 	for i := len(topicsToTeardown) - 1; i >= 0; i-- {
 		topicSpec := topicsToTeardown[i]

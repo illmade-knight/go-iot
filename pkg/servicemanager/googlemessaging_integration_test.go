@@ -235,7 +235,7 @@ resources:
 // Test_03_Adapter_CreateSubscriptionFailsForMissingTopic tests the adapter's logic directly.
 func (s *PubsubIntegrationTestSuite) Test_03_Adapter_CreateSubscriptionFailsForMissingTopic() {
 	// --- Arrange ---
-	subSpec := servicemanager.MessagingSubscriptionConfig{
+	subSpec := servicemanager.SubscriptionConfig{
 		Name:  testSubName,
 		Topic: "this-topic-does-not-exist",
 	}

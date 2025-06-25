@@ -68,7 +68,7 @@ func GetConfigurationForService(def ServicesDefinition, serviceName, environment
 	}
 
 	// Populate PublishesToTopics
-	for _, topicCfg := range fullConfig.Resources.MessagingTopics {
+	for _, topicCfg := range fullConfig.Resources.Topics {
 		if topicCfg.ProducerService == serviceName {
 			response.PublishesToTopics = append(response.PublishesToTopics, ServiceResourceInfo{
 				Name:   fmt.Sprintf("projects/%s/topics/%s", targetProjectID, topicCfg.Name),
