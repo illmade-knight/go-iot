@@ -4,6 +4,8 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
+
 	"github.com/rs/zerolog"
 )
 
@@ -169,21 +171,30 @@ func (dfm *DataflowManager) Setup(ctx context.Context) (*ProvisionedResources, e
 }
 
 // Teardown deletes resources for this specific dataflow.
+// It now collects errors from sub-managers and returns a single aggregated error if any failures occur.
 func (dfm *DataflowManager) Teardown(ctx context.Context, teardownProtection bool) error {
 	dfm.logger.Info().Msg("Starting dataflow-specific teardown...")
 	resources := dfm.dataflowSpec.Resources
+	var errorMessages []string
 
-	// Teardown sequentially to respect dependencies.
+	// Teardown sequentially to respect dependencies, collecting errors along the way.
 	if err := dfm.bigqueryManager.Teardown(ctx, dfm.projectID, resources, teardownProtection); err != nil {
+		errorMessages = append(errorMessages, fmt.Sprintf("BigQuery teardown failed: %v", err))
 		dfm.logger.Error().Err(err).Msg("Error during BigQuery teardown for dataflow, continuing...")
 	}
 	if err := dfm.storageManager.Teardown(ctx, resources, teardownProtection); err != nil {
+		errorMessages = append(errorMessages, fmt.Sprintf("GCS teardown failed: %v", err))
 		dfm.logger.Error().Err(err).Msg("Error during GCS teardown for dataflow, continuing...")
 	}
 	if err := dfm.messagingManager.Teardown(ctx, dfm.projectID, resources, teardownProtection); err != nil {
+		errorMessages = append(errorMessages, fmt.Sprintf("Messaging teardown failed: %v", err))
 		dfm.logger.Error().Err(err).Msg("Error during Messaging teardown for dataflow, continuing...")
 	}
 
 	dfm.logger.Info().Msg("Dataflow-specific teardown completed.")
+
+	if len(errorMessages) > 0 {
+		return errors.New(strings.Join(errorMessages, "; "))
+	}
 	return nil
 }

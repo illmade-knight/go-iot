@@ -3,6 +3,7 @@ package servicemanager
 import (
 	"cloud.google.com/go/bigquery"
 	"context"
+	"errors" // Make sure errors is imported
 	"fmt"
 	telemetry "github.com/illmade-knight/go-iot/gen/go/protos/telemetry"
 	"github.com/rs/zerolog"
@@ -413,18 +414,24 @@ func (m *BigQueryManager) Teardown(ctx context.Context, projectID string, resour
 		return fmt.Errorf("teardown protection enabled for this operation")
 	}
 
+	var errorMessages []string
 	if err := m.teardownTables(ctx, m.client, resources.BigQueryTables); err != nil {
-		return err
+		errorMessages = append(errorMessages, err.Error())
 	}
 	if err := m.teardownDatasets(ctx, m.client, resources.BigQueryDatasets); err != nil {
-		return err
+		errorMessages = append(errorMessages, err.Error())
 	}
+
 	m.logger.Info().Str("project_id", projectID).Msg("BigQuery teardown completed")
+	if len(errorMessages) > 0 {
+		return errors.New(strings.Join(errorMessages, "; "))
+	}
 	return nil
 }
 
 func (m *BigQueryManager) teardownTables(ctx context.Context, client BQClient, tablesToTeardown []BigQueryTable) error {
 	m.logger.Info().Int("count", len(tablesToTeardown)).Msg("Tearing down BigQuery tables...")
+	var errorMessages []string
 	for i := len(tablesToTeardown) - 1; i >= 0; i-- {
 		tableCfg := tablesToTeardown[i]
 		if tableCfg.Name == "" || tableCfg.Dataset == "" {
@@ -437,16 +444,21 @@ func (m *BigQueryManager) teardownTables(ctx context.Context, client BQClient, t
 				m.logger.Info().Str("table", tableCfg.Name).Msg("Table not found, skipping.")
 			} else {
 				m.logger.Error().Err(err).Str("table", tableCfg.Name).Msg("Failed to delete table")
+				errorMessages = append(errorMessages, fmt.Sprintf("table %s: %v", tableCfg.Name, err))
 			}
 		} else {
 			m.logger.Info().Str("table", tableCfg.Name).Msg("Table deleted.")
 		}
+	}
+	if len(errorMessages) > 0 {
+		return errors.New(strings.Join(errorMessages, ", "))
 	}
 	return nil
 }
 
 func (m *BigQueryManager) teardownDatasets(ctx context.Context, client BQClient, datasetsToTeardown []BigQueryDataset) error {
 	m.logger.Info().Int("count", len(datasetsToTeardown)).Msg("Tearing down BigQuery datasets...")
+	var errorMessages []string
 	for i := len(datasetsToTeardown) - 1; i >= 0; i-- {
 		dsCfg := datasetsToTeardown[i]
 		if dsCfg.Name == "" {
@@ -459,12 +471,17 @@ func (m *BigQueryManager) teardownDatasets(ctx context.Context, client BQClient,
 				m.logger.Info().Str("dataset", dsCfg.Name).Msg("Dataset not found, skipping.")
 			} else if strings.Contains(err.Error(), "still contains resources") {
 				m.logger.Error().Err(err).Str("dataset", dsCfg.Name).Msg("Dataset not empty.")
+				errorMessages = append(errorMessages, fmt.Sprintf("dataset %s not empty: %v", dsCfg.Name, err))
 			} else {
 				m.logger.Error().Err(err).Str("dataset", dsCfg.Name).Msg("Failed to delete dataset")
+				errorMessages = append(errorMessages, fmt.Sprintf("dataset %s: %v", dsCfg.Name, err))
 			}
 		} else {
 			m.logger.Info().Str("dataset", dsCfg.Name).Msg("Dataset deleted.")
 		}
+	}
+	if len(errorMessages) > 0 {
+		return errors.New(strings.Join(errorMessages, ", "))
 	}
 	return nil
 }

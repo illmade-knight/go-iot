@@ -4,6 +4,8 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
+
 	"github.com/rs/zerolog"
 )
 
@@ -141,6 +143,7 @@ func (sm *ServiceManager) SetupAll(ctx context.Context, environment string) (*Pr
 }
 
 // TeardownAll runs the teardown process for all dataflows defined in the configuration.
+// It now collects errors from each dataflow teardown and returns them as a single aggregated error.
 func (sm *ServiceManager) TeardownAll(ctx context.Context, environment string) error {
 	sm.logger.Info().Str("environment", environment).Msg("Starting full environment teardown for all dataflows...")
 
@@ -149,14 +152,26 @@ func (sm *ServiceManager) TeardownAll(ctx context.Context, environment string) e
 		return fmt.Errorf("failed to get top level config for TeardownAll: %w", err)
 	}
 
+	var errorMessages []string
+
+	// Iterate in reverse order to respect potential dependencies
 	for i := len(fullConfig.Dataflows) - 1; i >= 0; i-- {
 		dfSpec := fullConfig.Dataflows[i]
 		if err := sm.TeardownDataflow(ctx, environment, dfSpec.Name); err != nil {
-			sm.logger.Error().Err(err).Str("dataflow", dfSpec.Name).Msg("Failed to teardown dataflow, continuing...")
+			// CORRECTED LOGIC: Wrap the raw error from TeardownDataflow with the specific dataflow context.
+			errorMessage := fmt.Sprintf("failed to teardown dataflow '%s': %v", dfSpec.Name, err)
+			sm.logger.Error().Err(err).Str("dataflow", dfSpec.Name).Msg("Teardown error occurred, continuing...")
+			errorMessages = append(errorMessages, errorMessage)
 		}
 	}
 
 	sm.logger.Info().Str("environment", environment).Msg("Full environment teardown completed.")
+
+	// If any errors were collected, return them as a single error.
+	if len(errorMessages) > 0 {
+		return errors.New(strings.Join(errorMessages, "; "))
+	}
+
 	return nil
 }
 
@@ -203,6 +218,8 @@ func (sm *ServiceManager) TeardownDataflow(ctx context.Context, environment stri
 		teardownProtection = envSpec.TeardownProtection
 	}
 
+	// CORRECTED LOGIC: Return the error from the DataflowManager directly.
+	// The caller (TeardownAll) is responsible for adding context about which dataflow failed.
 	return dfm.Teardown(ctx, teardownProtection)
 }
 
@@ -246,7 +263,6 @@ func (sm *ServiceManager) initDataflowManager(ctx context.Context, environment, 
 		defaultLocation = fullConfig.DefaultLocation
 	}
 
-	// FIX: Use NewDataflowManagerFromManagers to pass down the existing, correctly configured managers.
 	return NewDataflowManagerFromManagers(
 		sm.messagingManager,
 		sm.storageManager,

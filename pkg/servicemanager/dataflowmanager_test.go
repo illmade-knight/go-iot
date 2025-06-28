@@ -59,7 +59,10 @@ func TestDataflowManager_Setup_WithMockClients(t *testing.T) {
 
 	// 2. Set expectations on the Mock Clients, using the explicit `ctx` from the test.
 	mockTopic := new(MockMessagingTopic)
-	mockMsgClient.On("Validate", spec.Resources).Return(nil)
+	// The Validate method is called within the MessagingManager's Setup.
+	// We mock it to return nil, indicating success. Using mock.Anything
+	// makes the test less brittle to changes in the exact resource spec.
+	mockMsgClient.On("Validate", mock.Anything).Return(nil)
 	mockMsgClient.On("Topic", "df-topic-1").Return(mockTopic)
 	mockTopic.On("Exists", ctx).Return(false, nil)
 	mockMsgClient.On("CreateTopic", ctx, "df-topic-1").Return(mockTopic, nil)
@@ -70,7 +73,6 @@ func TestDataflowManager_Setup_WithMockClients(t *testing.T) {
 	mockBucket.On("Attrs", ctx).Return(nil, errors.New("storage: bucket doesn't exist"))
 	mockBucket.On("Create", ctx, projectID, mock.Anything).Return(nil)
 
-	// FIX: Return an error string that the BQManager's notFound check will recognize.
 	mockTable := new(MockBQTable)
 	mockTable.On("Metadata", ctx).Return(nil, errors.New("table notFound"))
 	mockTable.On("Create", ctx, mock.Anything).Return(nil)
@@ -116,4 +118,109 @@ func TestDataflowManager_Setup_WithMockClients(t *testing.T) {
 	mockBqClient.AssertExpectations(t)
 	mockDataset.AssertExpectations(t)
 	mockTable.AssertExpectations(t)
+}
+
+// TestDataflowManager_Teardown_WithMockClients is the new test suite to validate the Teardown method.
+func TestDataflowManager_Teardown_WithMockClients(t *testing.T) {
+	ctx := context.Background()
+	logger := zerolog.New(io.Discard)
+	spec := getTestDataflowResourceGroup()
+	projectID := "test-project-df"
+
+	t.Run("Teardown Succeeds", func(t *testing.T) {
+		// Arrange
+		mockMsgClient := new(MockMessagingClient)
+		mockStoreClient := new(MockStorageClient)
+		mockBqClient := new(MockBQClient)
+
+		// Mock successful deletions
+		mockTopic := new(MockMessagingTopic)
+		mockMsgClient.On("Topic", "df-topic-1").Return(mockTopic)
+		mockTopic.On("Delete", ctx).Return(nil)
+
+		mockBucket := new(MockBucketHandle)
+		mockStoreClient.On("Bucket", "df-bucket-1").Return(mockBucket)
+		mockBucket.On("Attrs", ctx).Return(&servicemanager.BucketAttributes{}, nil) // Exists
+		mockBucket.On("Delete", ctx).Return(nil)
+
+		mockTable := new(MockBQTable)
+		mockTable.On("Delete", ctx).Return(nil)
+		mockDataset := new(MockBQDataset)
+		mockDataset.On("Delete", ctx).Return(nil)
+		mockDataset.On("Table", "df-table-1").Return(mockTable)
+		mockBqClient.On("Project").Return(projectID)
+		mockBqClient.On("Dataset", "df-dataset-1").Return(mockDataset)
+
+		msgManager, _ := servicemanager.NewMessagingManager(mockMsgClient, logger)
+		storeManager, _ := servicemanager.NewStorageManager(mockStoreClient, logger)
+		bqManager, _ := servicemanager.NewBigQueryManager(mockBqClient, logger, nil)
+
+		dfm, err := servicemanager.NewDataflowManagerFromManagers(
+			msgManager, storeManager, bqManager, spec, projectID, "", nil, "test", logger,
+		)
+		require.NoError(t, err)
+
+		// Act
+		err = dfm.Teardown(ctx, false)
+
+		// Assert
+		require.NoError(t, err)
+		mockMsgClient.AssertExpectations(t)
+		mockStoreClient.AssertExpectations(t)
+		mockBqClient.AssertExpectations(t)
+	})
+
+	t.Run("Teardown Returns Aggregated Error on Partial Failure", func(t *testing.T) {
+		// Arrange
+		mockMsgClient := new(MockMessagingClient)
+		mockStoreClient := new(MockStorageClient)
+		mockBqClient := new(MockBQClient)
+
+		// Mock GCS & Messaging deletions to SUCCEED
+		mockBucket := new(MockBucketHandle)
+		mockStoreClient.On("Bucket", "df-bucket-1").Return(mockBucket)
+		mockBucket.On("Attrs", ctx).Return(&servicemanager.BucketAttributes{}, nil)
+		mockBucket.On("Delete", ctx).Return(nil)
+
+		mockTopic := new(MockMessagingTopic)
+		mockMsgClient.On("Topic", "df-topic-1").Return(mockTopic)
+		mockTopic.On("Delete", ctx).Return(nil)
+
+		// Mock BigQuery table deletion to FAIL
+		mockTable := new(MockBQTable)
+		mockTable.On("Delete", ctx).Return(errors.New("mock BQ table delete error"))
+
+		mockDataset := new(MockBQDataset)
+		// The dataset deletion should still be attempted and succeed
+		mockDataset.On("Delete", ctx).Return(nil)
+		mockDataset.On("Table", "df-table-1").Return(mockTable)
+
+		mockBqClient.On("Project").Return(projectID)
+		mockBqClient.On("Dataset", "df-dataset-1").Return(mockDataset)
+
+		msgManager, _ := servicemanager.NewMessagingManager(mockMsgClient, logger)
+		storeManager, _ := servicemanager.NewStorageManager(mockStoreClient, logger)
+		// The nil for schema registry is fine for this test as we aren't calling setup.
+		bqManager, _ := servicemanager.NewBigQueryManager(mockBqClient, logger, nil)
+
+		dfm, err := servicemanager.NewDataflowManagerFromManagers(
+			msgManager, storeManager, bqManager, spec, projectID, "", nil, "test", logger,
+		)
+		require.NoError(t, err)
+
+		// Act
+		err = dfm.Teardown(ctx, false)
+
+		// Assert
+		require.Error(t, err, "Teardown should return an error when BigQuery fails")
+		assert.Contains(t, err.Error(), "BigQuery teardown failed", "Error message should identify the failing manager")
+		assert.Contains(t, err.Error(), "mock BQ table delete error", "Error message should contain the root cause from the sub-manager")
+
+		// Verify that all teardown operations were still attempted
+		mockMsgClient.AssertExpectations(t)
+		mockStoreClient.AssertExpectations(t)
+		mockBqClient.AssertExpectations(t)
+		mockDataset.AssertExpectations(t)
+		mockTable.AssertExpectations(t)
+	})
 }

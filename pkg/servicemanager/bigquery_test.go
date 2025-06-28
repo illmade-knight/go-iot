@@ -2,9 +2,9 @@ package servicemanager_test
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
-	"strings"
 	"testing"
 
 	"cloud.google.com/go/bigquery"
@@ -113,16 +113,6 @@ func newNotFoundError(resourceType, resourceID string) error {
 	return &notFoundError{msg: fmt.Sprintf("%s %s notFound", resourceType, resourceID)}
 }
 
-func isBigQueryNotFoundError(err error) bool {
-	if err == nil {
-		return false
-	}
-	if _, ok := err.(*notFoundError); ok {
-		return true
-	}
-	return strings.Contains(err.Error(), "notFound") || strings.Contains(err.Error(), "Not Found")
-}
-
 func getMeterReadingSchema() bigquery.Schema {
 	schema, err := bigquery.InferSchema(&telemetry.MeterReadingBQWrapper{})
 	if err != nil {
@@ -175,7 +165,6 @@ func TestBigQueryManager_Setup(t *testing.T) {
 		manager, err := servicemanager.NewBigQueryManager(mockClient, logger, nil)
 		require.NoError(t, err)
 
-		// Call Setup with the new signature
 		err = manager.Setup(ctx, testProjectID, testLocation, testResources)
 		require.NoError(t, err)
 
@@ -205,7 +194,6 @@ func TestBigQueryManager_Teardown(t *testing.T) {
 		manager, err := servicemanager.NewBigQueryManager(mockClient, logger, nil)
 		require.NoError(t, err)
 
-		// Call Teardown with the new signature
 		err = manager.Teardown(ctx, testProjectID, testResources, false)
 		require.NoError(t, err)
 
@@ -221,13 +209,58 @@ func TestBigQueryManager_Teardown(t *testing.T) {
 
 		mockClient.On("Project").Return(testProjectID)
 
-		// Call Teardown with the new signature and protection enabled
 		err = manager.Teardown(ctx, testProjectID, testResources, true)
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "teardown protection enabled")
 
 		mockClient.AssertCalled(t, "Project")
 		mockClient.AssertNotCalled(t, "Dataset", mock.Anything)
+	})
+
+	t.Run("Partial Failure returns aggregated error", func(t *testing.T) {
+		// Arrange: Define resources with multiple tables to test the loop
+		multiTableResources := servicemanager.ResourcesSpec{
+			BigQueryDatasets: []servicemanager.BigQueryDataset{{Name: "dataset1"}},
+			BigQueryTables: []servicemanager.BigQueryTable{
+				{Name: "table1", Dataset: "dataset1"},
+				{Name: "table2", Dataset: "dataset1"},
+			},
+		}
+
+		mockClient := new(MockBQClient)
+		mockDataset := new(MockBQDataset)
+		mockTable1 := new(MockBQTable)
+		mockTable2 := new(MockBQTable)
+
+		mockClient.On("Project").Return(testProjectID)
+		mockClient.On("Dataset", "dataset1").Return(mockDataset)
+
+		// Link tables to the dataset mock
+		mockDataset.On("Table", "table1").Return(mockTable1)
+		mockDataset.On("Table", "table2").Return(mockTable2)
+
+		// Mock one table deletion to FAIL, the other to SUCCEED
+		mockTable1.On("Delete", ctx).Return(errors.New("mock permission error on table1"))
+		mockTable2.On("Delete", ctx).Return(nil)
+
+		// Mock dataset deletion to succeed
+		mockDataset.On("Delete", ctx).Return(nil)
+
+		manager, err := servicemanager.NewBigQueryManager(mockClient, logger, nil)
+		require.NoError(t, err)
+
+		// Act
+		err = manager.Teardown(ctx, testProjectID, multiTableResources, false)
+
+		// Assert
+		require.Error(t, err, "Teardown should return an error if any sub-operation fails")
+		assert.Contains(t, err.Error(), "mock permission error on table1", "The aggregated error should contain the specific failure message")
+
+		// Verify that all teardown operations were still attempted
+		mockClient.AssertExpectations(t)
+		mockDataset.AssertExpectations(t)
+		mockTable1.AssertExpectations(t)
+		mockTable2.AssertExpectations(t)
 	})
 }
 
