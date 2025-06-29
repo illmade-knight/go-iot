@@ -4,7 +4,6 @@ package loadgen
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"strings"
 	"time"
@@ -76,26 +75,14 @@ func (c *MqttClient) Disconnect() {
 // in the format expected by the application's backend services.
 func (c *MqttClient) Publish(ctx context.Context, device *Device) error {
 	// Generate the application-specific payload (e.g., GardenMonitorPayload JSON).
-	// This now passes the device pointer, allowing the generator to use the device ID.
 	payloadBytes, err := device.PayloadGenerator.GeneratePayload(device)
 	if err != nil {
 		return fmt.Errorf("failed to generate payload for device %s: %w", device.ID, err)
 	}
 
-	// Define the wrapper structure that the backend services expect.
-	// This matches the format used in the working e2e test: {"payload":{...}}.
-	// We use json.RawMessage to embed the already-marshalled payloadBytes.
-	messageToPublish := struct {
-		Payload json.RawMessage `json:"payload"`
-	}{
-		Payload: payloadBytes,
-	}
-
-	// Marshal the final, correctly-structured message.
-	finalJSON, err := json.Marshal(messageToPublish)
-	if err != nil {
-		return fmt.Errorf("failed to marshal final message for device %s: %w", device.ID, err)
-	}
+	// CORRECTED: The payload is no longer wrapped in an extra {"payload":...} structure.
+	// We will publish the generated payloadBytes directly.
+	finalJSON := payloadBytes
 
 	// Publish to a specific topic, replacing the wildcard '+' with the device's actual ID.
 	topic := strings.Replace(c.topicPattern, "+", device.ID, 1)
