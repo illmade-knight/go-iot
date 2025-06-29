@@ -13,14 +13,16 @@ import (
 	"cloud.google.com/go/pubsub"
 	"github.com/illmade-knight/go-iot/pkg/types"
 	"github.com/rs/zerolog"
+	"github.com/rs/zerolog/log"
 )
 
 // GooglePubsubProducerConfig holds configuration for the Google Pub/Sub producer.
 type GooglePubsubProducerConfig struct {
-	ProjectID  string
-	TopicID    string
-	BatchSize  int           // New: for internal buffering
-	BatchDelay time.Duration // New: for internal buffering
+	ProjectID              string
+	TopicID                string
+	BatchSize              int
+	BatchDelay             time.Duration
+	InputChannelMultiplier int // New: Multiplier for BatchSize to determine input channel capacity
 }
 
 // LoadGooglePubsubProducerConfigFromEnv loads producer configuration from environment variables.
@@ -28,10 +30,11 @@ func LoadGooglePubsubProducerConfigFromEnv() (*GooglePubsubProducerConfig, error
 	topicID := os.Getenv("PUBSUB_TOPIC_ID_ENRICHED_OUTPUT")
 
 	cfg := &GooglePubsubProducerConfig{
-		ProjectID:  os.Getenv("GCP_PROJECT_ID"),
-		TopicID:    topicID,
-		BatchSize:  100,                    // Default batch size
-		BatchDelay: 100 * time.Millisecond, // Default batch delay
+		ProjectID:              os.Getenv("GCP_PROJECT_ID"),
+		TopicID:                topicID,
+		BatchSize:              100,                    // Default batch size
+		BatchDelay:             100 * time.Millisecond, // Default batch delay
+		InputChannelMultiplier: 2,                      // Default multiplier
 	}
 	if cfg.ProjectID == "" {
 		return nil, errors.New("GCP_PROJECT_ID environment variable not set for Pub/Sub producer")
@@ -47,7 +50,16 @@ func LoadGooglePubsubProducerConfigFromEnv() (*GooglePubsubProducerConfig, error
 	}
 	if bd := os.Getenv("PUBSUB_PRODUCER_BATCH_DELAY"); bd != "" {
 		if val, err := time.ParseDuration(bd); err == nil {
+			if val < 0 {
+				log.Warn().Dur("invalid_delay", val).Msg("PUBSUB_PRODUCER_BATCH_DELAY is negative, producer will handle it.")
+			}
 			cfg.BatchDelay = val
+		}
+	}
+	// Optionally load InputChannelMultiplier from env
+	if icm := os.Getenv("PUBSUB_PRODUCER_INPUT_CHAN_MULTIPLIER"); icm != "" {
+		if val, err := strconv.Atoi(icm); err == nil {
+			cfg.InputChannelMultiplier = val
 		}
 	}
 
@@ -79,17 +91,52 @@ func NewGooglePubsubProducer[T any](
 		return nil, fmt.Errorf("pubsub client cannot be nil for producer")
 	}
 
+	// Validate InputChannelMultiplier
+	if cfg.InputChannelMultiplier <= 0 {
+		logger.Warn().Int("invalid_multiplier", cfg.InputChannelMultiplier).Msg("GooglePubsubProducerConfig.InputChannelMultiplier is non-positive. Defaulting to 1.")
+		cfg.InputChannelMultiplier = 1
+	}
+
 	topic := client.Topic(cfg.TopicID)
 
-	topicCtx, topicCancel := context.WithTimeout(context.Background(), time.Second*10)
-	defer topicCancel()
-	// Check if the topic exists.
-	exists, err := topic.Exists(topicCtx) // Use passed ctx for initial check
-	if err != nil {
-		return nil, fmt.Errorf("failed to check existence of topic %s: %w", cfg.TopicID, err)
+	// Retry logic for topic existence check (keep this for production robustness)
+	maxRetries := 3
+	retryDelay := 100 * time.Millisecond
+	exists := false
+	var existsErr error
+
+	for i := 0; i < maxRetries; i++ {
+		topicCtx, topicCancel := context.WithTimeout(context.Background(), 5*time.Second)
+		exists, existsErr = topic.Exists(topicCtx)
+		topicCancel() // Ensure context is cancelled for each iteration
+
+		if existsErr == nil && exists {
+			logger.Debug().Str("topic_id", cfg.TopicID).Int("attempt", i+1).Msg("Topic confirmed to exist by producer's internal check.")
+			break // Topic exists and no error, success!
+		}
+
+		if existsErr != nil {
+			logger.Warn().Err(existsErr).Str("topic_id", cfg.TopicID).Int("attempt", i+1).
+				Msg("NewGooglePubsubProducer: Failed to check existence of topic, retrying...")
+		} else if !exists {
+			logger.Warn().Str("topic_id", cfg.TopicID).Int("attempt", i+1).
+				Msg("NewGooglePubsubProducer: Topic reported as not existing by producer's internal check, retrying...")
+		}
+
+		time.Sleep(retryDelay)
+		retryDelay *= 2 // Exponential backoff
+	}
+
+	if existsErr != nil {
+		return nil, fmt.Errorf("failed to check existence of topic %s after %d retries: %w", cfg.TopicID, maxRetries, existsErr)
 	}
 	if !exists {
-		return nil, fmt.Errorf("pubsub topic %s does not exist", cfg.TopicID)
+		return nil, fmt.Errorf("pubsub topic %s does not exist after %d retries", cfg.TopicID, maxRetries)
+	}
+
+	// Validate BatchDelay
+	if cfg.BatchDelay < 0 {
+		logger.Warn().Dur("invalid_delay", cfg.BatchDelay).Msg("GooglePubsubProducerConfig.BatchDelay is negative. Time-based batching will be disabled.")
 	}
 
 	shutdownCtx, shutdownFunc := context.WithCancel(context.Background()) // Producer manages its own shutdown context
@@ -100,7 +147,59 @@ func NewGooglePubsubProducer[T any](
 		client:       client,
 		topic:        topic,
 		logger:       logger.With().Str("component", "GooglePubsubProducer").Str("topic_id", cfg.TopicID).Logger(),
-		inputChan:    make(chan *types.BatchedMessage[T], cfg.BatchSize*2), // Buffered channel
+		inputChan:    make(chan *types.BatchedMessage[T], cfg.BatchSize*cfg.InputChannelMultiplier), // Use multiplier
+		doneChan:     make(chan struct{}),
+		shutdownCtx:  shutdownCtx,
+		shutdownFunc: shutdownFunc,
+		batchSize:    cfg.BatchSize,
+		batchDelay:   cfg.BatchDelay,
+	}, nil
+}
+
+// NewGooglePubsubProducerWithExistingTopic creates a new GooglePubsubProducer
+// by directly accepting an already created and validated *pubsub.Topic object.
+// This is useful for testing or scenarios where the topic lifecycle is managed externally.
+func NewGooglePubsubProducerWithExistingTopic[T any](
+	client *pubsub.Client,
+	topic *pubsub.Topic, // Direct injection of the topic object
+	cfg *GooglePubsubProducerConfig,
+	logger zerolog.Logger,
+) (*GooglePubsubProducer[T], error) {
+	if client == nil {
+		return nil, fmt.Errorf("pubsub client cannot be nil for producer")
+	}
+	if topic == nil {
+		return nil, fmt.Errorf("pubsub topic cannot be nil for producer")
+	}
+	// Optional: Sanity check that the config's topic ID matches the provided topic's ID
+	if cfg.TopicID != topic.ID() {
+		logger.Warn().Str("config_topic_id", cfg.TopicID).Str("provided_topic_id", topic.ID()).
+			Msg("Producer config TopicID does not match provided Pub/Sub Topic object ID. Using provided topic object's ID.")
+		cfg.TopicID = topic.ID() // Adjust config to match the actual topic object
+	}
+
+	// Validate InputChannelMultiplier
+	if cfg.InputChannelMultiplier <= 0 {
+		logger.Warn().Int("invalid_multiplier", cfg.InputChannelMultiplier).Msg("GooglePubsubProducerConfig.InputChannelMultiplier is non-positive. Defaulting to 1.")
+		cfg.InputChannelMultiplier = 1
+	}
+
+	// No topic.Exists() check needed here, as the caller (test) has already validated it.
+
+	// Validate BatchDelay
+	if cfg.BatchDelay < 0 {
+		logger.Warn().Dur("invalid_delay", cfg.BatchDelay).Msg("GooglePubsubProducerConfig.BatchDelay is negative. Time-based batching will be disabled.")
+	}
+
+	shutdownCtx, shutdownFunc := context.WithCancel(context.Background())
+
+	logger.Info().Str("topic_id", cfg.TopicID).Msg("GooglePubsubProducer (WithExistingTopic) initialized successfully.")
+
+	return &GooglePubsubProducer[T]{
+		client:       client,
+		topic:        topic, // Use the injected topic
+		logger:       logger.With().Str("component", "GooglePubsubProducer").Str("topic_id", cfg.TopicID).Logger(),
+		inputChan:    make(chan *types.BatchedMessage[T], cfg.BatchSize*cfg.InputChannelMultiplier), // Use multiplier
 		doneChan:     make(chan struct{}),
 		shutdownCtx:  shutdownCtx,
 		shutdownFunc: shutdownFunc,
@@ -124,20 +223,25 @@ func (p *GooglePubsubProducer[T]) Start() {
 // batchProcessorLoop handles batching and publishing messages.
 func (p *GooglePubsubProducer[T]) batchProcessorLoop() {
 	defer p.wg.Done()
-	// *** CRITICAL CHANGE: Ensure p.topic.Stop() is called before doneChan is closed ***
-	// This ensures all pending Pub/Sub publishes complete before signaling Done.
 	defer func() {
 		if p.topic != nil {
 			p.logger.Info().Msg("Pub/Sub producer's internal loop stopping topic, flushing any remaining async messages...")
 			p.topic.Stop() // This blocks until all outstanding messages are published.
 			p.logger.Info().Msg("Pub/Sub producer's topic stopped.")
 		}
-		close(p.doneChan) // Now close doneChan AFTER topic.Stop()
+		close(p.doneChan)
 	}()
 
 	var messages []*types.BatchedMessage[T]
-	ticker := time.NewTicker(p.batchDelay)
-	defer ticker.Stop()
+
+	// Only create a ticker if the batch delay is a positive duration.
+	var ticker *time.Ticker
+	var tickerC <-chan time.Time
+	if p.batchDelay > 0 {
+		ticker = time.NewTicker(p.batchDelay)
+		tickerC = ticker.C
+		defer ticker.Stop()
+	}
 
 	for {
 		select {
@@ -145,7 +249,7 @@ func (p *GooglePubsubProducer[T]) batchProcessorLoop() {
 			if !ok {
 				p.logger.Info().Msg("Producer input channel closed, flushing remaining messages.")
 				p.flush(messages)
-				return // Channel closed, exit loop, triggers defer
+				return
 			}
 			messages = append(messages, msg)
 			if len(messages) >= p.batchSize {
@@ -153,7 +257,7 @@ func (p *GooglePubsubProducer[T]) batchProcessorLoop() {
 				p.flush(messages)
 				messages = nil // Reset batch
 			}
-		case <-ticker.C:
+		case <-tickerC: // This channel will be nil if batchDelay <= 0, so this case is effectively disabled.
 			if len(messages) > 0 {
 				p.logger.Debug().Int("count", len(messages)).Msg("Batch delay reached, flushing messages.")
 				p.flush(messages)
@@ -162,7 +266,7 @@ func (p *GooglePubsubProducer[T]) batchProcessorLoop() {
 		case <-p.shutdownCtx.Done():
 			p.logger.Info().Msg("Producer shutdown context cancelled, flushing remaining messages.")
 			p.flush(messages)
-			return // Shutdown signal, exit loop, triggers defer
+			return
 		}
 	}
 }
@@ -175,10 +279,9 @@ func (p *GooglePubsubProducer[T]) flush(messages []*types.BatchedMessage[T]) {
 
 	p.logger.Debug().Int("count", len(messages)).Msg("Publishing batch to Pub/Sub.")
 
-	var publishWg sync.WaitGroup // New: WaitGroup for this flush operation's publishes
+	var publishWg sync.WaitGroup
 
 	for _, batchedMsg := range messages {
-		// Marshal each payload individually
 		payload, err := json.Marshal(batchedMsg.Payload)
 		if err != nil {
 			p.logger.Error().Err(err).
@@ -188,20 +291,19 @@ func (p *GooglePubsubProducer[T]) flush(messages []*types.BatchedMessage[T]) {
 			continue
 		}
 
-		publishWg.Add(1) // Increment for each publish initiated
+		publishWg.Add(1)
 		go func(bm *types.BatchedMessage[T]) {
-			defer publishWg.Done() // Ensure Done is called when this goroutine finishes
+			defer publishWg.Done()
 
-			// Use a context with a timeout for the publish itself.
-			publishCtx, publishCancel := context.WithTimeout(context.Background(), 5*time.Second)
+			// *** INCREASED TIMEOUT FOR PUBLISH CONTEXT ***
+			publishCtx, publishCancel := context.WithTimeout(context.Background(), 10*time.Second) // Increased from 5s
 			defer publishCancel()
 
 			res := p.topic.Publish(publishCtx, &pubsub.Message{
 				Data: payload,
 			})
 
-			// Wait for the result of this specific publish.
-			msgID, err := res.Get(publishCtx) // Use the same publishCtx for Get()
+			msgID, err := res.Get(publishCtx)
 
 			if err != nil {
 				p.logger.Error().Err(err).
@@ -215,26 +317,19 @@ func (p *GooglePubsubProducer[T]) flush(messages []*types.BatchedMessage[T]) {
 					Msg("Message published successfully and confirmed by Pub/Sub.")
 				bm.OriginalMessage.Ack()
 			}
-		}(batchedMsg) // Pass batchedMsg to the goroutine
+		}(batchedMsg)
 	}
 
-	// Wait for all publishes in this batch to complete and their callbacks invoked.
-	publishWg.Wait() // This ensures all res.Get() calls have returned before flush() exits.
+	publishWg.Wait()
 }
 
 // Stop gracefully shuts down the producer.
 func (p *GooglePubsubProducer[T]) Stop() {
 	p.logger.Info().Msg("Stopping Pub/Sub producer...")
-	// 1. Signal the batchProcessorLoop to stop and flush
 	p.shutdownFunc()
-	// 2. Close the input channel to unblock the loop's select statement if no more messages are coming
 	close(p.inputChan)
-	// 3. Wait for the batchProcessorLoop to finish (which now includes calling p.topic.Stop() and closing p.doneChan)
 	p.wg.Wait()
 	p.logger.Info().Msg("Pub/Sub producer stopped gracefully.")
-
-	// The client is passed in, so the caller owns its lifecycle.
-	// We should not close a client we didn't create.
 	p.logger.Info().Msg("GooglePubsubProducer does not close the injected Pub/Sub client.")
 }
 

@@ -1,14 +1,17 @@
-package device
+//go:build integration
+
+package device_test // Changed package to device_test
 
 import (
 	"context"
 	"errors"
-	"github.com/illmade-knight/go-iot/helpers/emulators"
 	"io"
 	"testing"
 	"time"
 
 	"cloud.google.com/go/firestore"
+	"github.com/illmade-knight/go-iot/helpers/emulators"
+	"github.com/illmade-knight/go-iot/pkg/device" // Import the main package now
 	"github.com/rs/zerolog"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -83,7 +86,7 @@ func TestGoogleDeviceMetadataFetcher_Integration_TableDriven(t *testing.T) {
 				locationID string
 				category   string
 			}{},
-			expectedErr: ErrMetadataNotFound,
+			expectedErr: device.ErrMetadataNotFound, // Referenced from 'device' package
 		},
 		{
 			name:      "Fetch with Incomplete Data",
@@ -131,11 +134,13 @@ func TestGoogleDeviceMetadataFetcher_Integration_TableDriven(t *testing.T) {
 			}
 
 			// Initialize GoogleDeviceMetadataFetcher (SUT) with the *injected* client.
-			fetcherConfig := &FirestoreFetcherConfig{
+			// Referencing FirestoreFetcherConfig from 'device' package
+			fetcherConfig := &device.FirestoreFetcherConfig{
 				ProjectID:      testProjectID,
 				CollectionName: testCollectionName,
 			}
-			deviceFetcher, err := NewGoogleDeviceMetadataFetcher(firestoreClient, fetcherConfig, logger) // Pass firestoreClient directly
+			// Referencing NewGoogleDeviceMetadataFetcher from 'device' package
+			deviceFetcher, err := device.NewGoogleDeviceMetadataFetcher(firestoreClient, fetcherConfig, logger) // Pass firestoreClient directly
 			require.NoError(t, err, "Failed to create GoogleDeviceMetadataFetcher for %s", tc.name)
 			// No defer deviceFetcher.Close() needed here as the client is closed by the parent t.Cleanup.
 
@@ -145,8 +150,8 @@ func TestGoogleDeviceMetadataFetcher_Integration_TableDriven(t *testing.T) {
 			// --- Assertions ---
 			if tc.expectedErr != nil {
 				require.Error(t, fetchErr, "Expected an error for %s", tc.name)
-				if errors.Is(tc.expectedErr, ErrMetadataNotFound) {
-					assert.True(t, errors.Is(fetchErr, ErrMetadataNotFound), "Error for %s should be ErrMetadataNotFound, got %v", tc.name, fetchErr)
+				if errors.Is(tc.expectedErr, device.ErrMetadataNotFound) { // Referenced from 'device' package
+					assert.True(t, errors.Is(fetchErr, device.ErrMetadataNotFound), "Error for %s should be ErrMetadataNotFound, got %v", tc.name, fetchErr)
 				} else {
 					assert.Contains(t, fetchErr.Error(), tc.expectedErr.Error(), "Error message for %s should contain '%s', got '%s'", tc.name, tc.expectedErr.Error(), fetchErr.Error())
 				}

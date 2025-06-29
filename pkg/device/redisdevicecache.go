@@ -5,9 +5,9 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"github.com/go-redis/redis/v8"
 	"time"
 
+	"github.com/go-redis/redis/v8"
 	"github.com/rs/zerolog"
 )
 
@@ -19,15 +19,12 @@ type RedisConfig struct {
 	CacheTTL time.Duration // Time-to-live for cache entries, e.g., 5 * time.Minute
 }
 
-// RedisDeviceMetadataFetcher implements DeviceMetadataFetcher using a Redis cache
-// that falls back to another DeviceMetadataFetcher (like Firestore) on a cache miss.
+// RedisDeviceMetadataFetcher implements CachedFetcher using a Redis cache.
 type RedisDeviceMetadataFetcher struct {
-	redisClient     *redis.Client
-	fallbackFetcher DeviceMetadataFetcher // The source of truth (e.g., Firestore fetcher)
-	logger          zerolog.Logger
-	ttl             time.Duration
-	// Use a shared context for Redis operations.
-	ctx context.Context
+	redisClient *redis.Client
+	logger      zerolog.Logger
+	ttl         time.Duration
+	// Removed the stored 'ctx context.Context' as methods will now receive it per call.
 }
 
 // deviceMetadataCache a helper struct for JSON serialization in Redis.
@@ -38,18 +35,13 @@ type deviceMetadataCache struct {
 	Category   string `json:"category"`
 }
 
-// NewRedisDeviceMetadataFetcher creates a new caching fetcher.
-// It takes a Redis configuration and a fallback fetcher (e.g., the Firestore one).
+// NewRedisDeviceMetadataFetcher creates a new Redis-based CachedFetcher.
+// It establishes a connection to Redis.
 func NewRedisDeviceMetadataFetcher(
-	ctx context.Context,
+	ctx context.Context, // This context is for the initial Ping, not stored for later use.
 	cfg *RedisConfig,
-	fallback DeviceMetadataFetcher,
 	logger zerolog.Logger,
 ) (*RedisDeviceMetadataFetcher, error) {
-	if fallback == nil {
-		return nil, errors.New("fallback fetcher cannot be nil")
-	}
-
 	// Create a new Redis client.
 	rdb := redis.NewClient(&redis.Options{
 		Addr:     cfg.Addr,
@@ -59,55 +51,47 @@ func NewRedisDeviceMetadataFetcher(
 
 	// Ping the Redis server to ensure a connection is established.
 	if err := rdb.Ping(ctx).Err(); err != nil {
+		rdb.Close() // Close client if ping fails
 		return nil, fmt.Errorf("failed to connect to redis: %w", err)
 	}
 
 	logger.Info().Str("redis_address", cfg.Addr).Msg("Successfully connected to Redis for device cache")
 
 	return &RedisDeviceMetadataFetcher{
-		redisClient:     rdb,
-		fallbackFetcher: fallback,
-		logger:          logger,
-		ttl:             cfg.CacheTTL,
-		ctx:             ctx,
+		redisClient: rdb,
+		logger:      logger.With().Str("component", "RedisCacheFetcher").Logger(), // Add component
+		ttl:         cfg.CacheTTL,
+		// Removed ctx storage
 	}, nil
 }
 
-// Fetch retrieves device metadata, checking Redis first.
-// If the data is not in the cache (a "cache miss"), it calls the fallback
-// fetcher, stores the result in Redis for future requests, and then returns the data.
-func (f *RedisDeviceMetadataFetcher) Fetch(deviceEUI string) (clientID, locationID, category string, err error) {
-	// 1. Try to get the device from the Redis cache.
-	cachedData, err := f.redisClient.Get(f.ctx, deviceEUI).Result()
+// FetchFromCache implements the CachedFetcher interface.
+func (f *RedisDeviceMetadataFetcher) FetchFromCache(ctx context.Context, deviceEUI string) (clientID, locationID, category string, err error) { // Added ctx
+	cachedData, err := f.redisClient.Get(ctx, deviceEUI).Result() // Use provided ctx
 	if err == nil {
-		// Cache Hit!
-		f.logger.Debug().Str("device_eui", deviceEUI).Msg("Cache hit: Found device metadata in Redis")
+		f.logger.Debug().Str("device_eui", deviceEUI).Msg("Redis cache hit: Found device metadata")
 		var metadata deviceMetadataCache
 		if jsonErr := json.Unmarshal([]byte(cachedData), &metadata); jsonErr != nil {
-			f.logger.Error().Err(jsonErr).Str("device_eui", deviceEUI).Msg("Failed to unmarshal cached device data from Redis")
-			// Treat as a cache miss if data is corrupted.
+			f.logger.Error().Err(jsonErr).Str("device_eui", deviceEUI).Msg("Failed to unmarshal cached device data from Redis (treating as miss)")
+			// Treat as a cache miss if data is corrupted, so source can be queried.
+			return "", "", "", ErrCacheMiss{EUI: deviceEUI}
 		} else {
-			// Successfully retrieved and unmarshaled from cache.
 			return metadata.ClientID, metadata.LocationID, metadata.Category, nil
 		}
 	}
 
-	if !errors.Is(err, redis.Nil) {
-		// An actual error occurred with Redis, not just a cache miss.
-		f.logger.Error().Err(err).Str("device_eui", deviceEUI).Msg("Error fetching from Redis cache")
-	} else {
-		f.logger.Debug().Str("device_eui", deviceEUI).Msg("Cache miss: Device metadata not found in Redis")
+	if errors.Is(err, redis.Nil) {
+		f.logger.Debug().Str("device_eui", deviceEUI).Msg("Redis cache miss: Device metadata not found")
+		return "", "", "", ErrCacheMiss{EUI: deviceEUI} // Explicitly return ErrCacheMiss
 	}
 
-	// 2. Cache Miss: Fetch from the fallback (Firestore).
-	clientID, locationID, category, err = f.fallbackFetcher(deviceEUI)
-	if err != nil {
-		// If the fallback couldn't find it or failed, return the error.
-		// Do not cache negative results like "not found".
-		return "", "", "", err
-	}
+	// An actual error occurred with Redis, not just a cache miss.
+	f.logger.Error().Err(err).Str("device_eui", deviceEUI).Msg("Error fetching from Redis cache")
+	return "", "", "", fmt.Errorf("redis fetch error: %w", err)
+}
 
-	// 3. Cache the result in Redis for next time.
+// WriteToCache implements the CachedFetcher interface.
+func (f *RedisDeviceMetadataFetcher) WriteToCache(ctx context.Context, deviceEUI, clientID, locationID, category string) error { // Added ctx
 	metadataToCache := deviceMetadataCache{
 		ClientID:   clientID,
 		LocationID: locationID,
@@ -115,21 +99,16 @@ func (f *RedisDeviceMetadataFetcher) Fetch(deviceEUI string) (clientID, location
 	}
 	jsonData, jsonErr := json.Marshal(metadataToCache)
 	if jsonErr != nil {
-		// Log the error but still return the data from the fallback.
-		// The service can proceed even if caching fails.
-		f.logger.Error().Err(jsonErr).Str("device_eui", deviceEUI).Msg("Failed to marshal device data for caching")
-		return clientID, locationID, category, nil
+		f.logger.Error().Err(jsonErr).Str("device_eui", deviceEUI).Msg("Failed to marshal device data for Redis caching")
+		return fmt.Errorf("failed to marshal for redis: %w", jsonErr)
 	}
 
-	// Set the value in Redis with the configured TTL.
-	if setErr := f.redisClient.Set(f.ctx, deviceEUI, jsonData, f.ttl).Err(); setErr != nil {
+	if setErr := f.redisClient.Set(ctx, deviceEUI, jsonData, f.ttl).Err(); setErr != nil { // Use provided ctx
 		f.logger.Error().Err(setErr).Str("device_eui", deviceEUI).Msg("Failed to set device metadata in Redis cache")
-	} else {
-		f.logger.Debug().Str("device_eui", deviceEUI).Msg("Successfully stored device metadata in Redis cache")
+		return fmt.Errorf("failed to set in redis: %w", setErr)
 	}
-
-	// Return the data retrieved from the fallback.
-	return clientID, locationID, category, nil
+	f.logger.Debug().Str("device_eui", deviceEUI).Msg("Successfully stored device metadata in Redis cache")
+	return nil
 }
 
 // Close gracefully closes the Redis client connection.
