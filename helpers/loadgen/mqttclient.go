@@ -71,33 +71,37 @@ func (c *MqttClient) Disconnect() {
 	}
 }
 
-// Publish generates a payload and sends a message to the MQTT broker
-// in the format expected by the application's backend services.
-func (c *MqttClient) Publish(ctx context.Context, device *Device) error {
-	// Generate the application-specific payload (e.g., GardenMonitorPayload JSON).
+// Publish generates a payload and sends a message to the MQTT broker.
+// It now returns true only on a successful publish acknowledgement.
+func (c *MqttClient) Publish(ctx context.Context, device *Device) (bool, error) {
+	// First, check if the context is already cancelled before doing any work.
+	if ctx.Err() != nil {
+		return false, ctx.Err()
+	}
+
 	payloadBytes, err := device.PayloadGenerator.GeneratePayload(device)
 	if err != nil {
-		return fmt.Errorf("failed to generate payload for device %s: %w", device.ID, err)
+		return false, fmt.Errorf("failed to generate payload for device %s: %w", device.ID, err)
 	}
 
-	// CORRECTED: The payload is no longer wrapped in an extra {"payload":...} structure.
-	// We will publish the generated payloadBytes directly.
-	finalJSON := payloadBytes
-
-	// Publish to a specific topic, replacing the wildcard '+' with the device's actual ID.
 	topic := strings.Replace(c.topicPattern, "+", device.ID, 1)
+	token := c.client.Publish(topic, c.qos, false, payloadBytes)
 
-	token := c.client.Publish(topic, c.qos, false, finalJSON)
-
-	// Asynchronously wait for the token to complete, or the context to be cancelled.
-	select {
-	case <-token.Done():
+	// CORRECTED: This no longer uses the main context, which was causing the race condition.
+	// It now waits for a fixed, reasonable duration for the broker to acknowledge the publish.
+	if token.WaitTimeout(2 * time.Second) {
 		if token.Error() != nil {
-			return fmt.Errorf("mqtt publish error for device %s: %w", device.ID, token.Error())
+			err := fmt.Errorf("mqtt publish error for device %s: %w", device.ID, token.Error())
+			c.logger.Warn().Err(err).Msg("Publish failed")
+			return false, err
 		}
 		c.logger.Debug().Str("device_id", device.ID).Str("topic", topic).Msg("Message published")
-		return nil
-	case <-ctx.Done():
-		return fmt.Errorf("context cancelled while publishing for device %s: %w", device.ID, ctx.Err())
+		return true, nil // Success
 	}
+
+	// This now correctly indicates a genuine timeout waiting for the broker's ACK,
+	// not a premature context cancellation.
+	err = fmt.Errorf("timed out waiting for publish confirmation for device %s", device.ID)
+	c.logger.Error().Err(err).Str("device_id", device.ID).Msg("Publish timeout")
+	return false, err
 }

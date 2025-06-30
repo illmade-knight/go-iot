@@ -22,7 +22,6 @@ type MockPayloadGenerator struct {
 
 func (m *MockPayloadGenerator) GeneratePayload(_ *loadgen.Device) ([]byte, error) {
 	args := m.Called()
-	// Safely cast the first return value to []byte
 	var payload []byte
 	if p, ok := args.Get(0).([]byte); ok {
 		payload = p
@@ -44,9 +43,10 @@ func (m *MockClient) Disconnect() {
 	m.Called()
 }
 
-func (m *MockClient) Publish(ctx context.Context, device *loadgen.Device) error {
+// Publish mock now matches the new (bool, error) signature.
+func (m *MockClient) Publish(ctx context.Context, device *loadgen.Device) (bool, error) {
 	args := m.Called(ctx, device)
-	return args.Error(0)
+	return args.Bool(0), args.Error(1)
 }
 
 // --- Tests ---
@@ -54,29 +54,30 @@ func (m *MockClient) Publish(ctx context.Context, device *loadgen.Device) error 
 func TestLoadGenerator_Run(t *testing.T) {
 	logger := zerolog.Nop()
 
-	t.Run("Successful run", func(t *testing.T) {
+	t.Run("Successful run counts messages", func(t *testing.T) {
 		// Arrange
 		mockClient := new(MockClient)
 		mockGenerator := new(MockPayloadGenerator)
 
 		devices := []*loadgen.Device{
-			{ID: "device-1", MessageRate: 10, PayloadGenerator: mockGenerator}, // 10 msg/sec * 0.2s = 2 messages
+			{ID: "device-1", MessageRate: 10, PayloadGenerator: mockGenerator},
 		}
-		duration := 250 * time.Millisecond // Use a short duration for testing
+		duration := 250 * time.Millisecond
 
-		// Expect Connect and Disconnect to be called once
 		mockClient.On("Connect").Return(nil).Once()
 		mockClient.On("Disconnect").Return().Once()
-		// Expect Publish to be called for the device
-		// We expect it to be called around 2 times (10Hz for 0.25s)
-		mockClient.On("Publish", mock.Anything, devices[0]).Return(nil).Maybe()
+		// Return true for success on publish calls.
+		mockClient.On("Publish", mock.Anything, devices[0]).Return(true, nil).Maybe()
 
 		// Act
 		lg := loadgen.NewLoadGenerator(mockClient, devices, logger)
-		err := lg.Run(context.Background(), duration)
+		// The Run method now returns a count.
+		count, err := lg.Run(context.Background(), duration)
 
 		// Assert
 		assert.NoError(t, err)
+		// With a rate of 10Hz over 0.25s, we expect 2 messages.
+		assert.Equal(t, 2, count)
 		mockClient.AssertExpectations(t)
 	})
 
@@ -89,13 +90,13 @@ func TestLoadGenerator_Run(t *testing.T) {
 		lg := loadgen.NewLoadGenerator(mockClient, []*loadgen.Device{}, logger)
 
 		// Act
-		err := lg.Run(context.Background(), 1*time.Second)
+		count, err := lg.Run(context.Background(), 1*time.Second)
 
 		// Assert
 		assert.Error(t, err)
+		assert.Equal(t, 0, count)
 		assert.Equal(t, connectErr, err)
 		mockClient.AssertExpectations(t)
-		// Ensure disconnect is not called if connect fails
 		mockClient.AssertNotCalled(t, "Disconnect")
 	})
 
@@ -113,12 +114,12 @@ func TestLoadGenerator_Run(t *testing.T) {
 
 		// Act
 		lg := loadgen.NewLoadGenerator(mockClient, devices, logger)
-		err := lg.Run(context.Background(), duration)
+		count, err := lg.Run(context.Background(), duration)
 
 		// Assert
 		assert.NoError(t, err)
+		assert.Equal(t, 0, count)
 		mockClient.AssertExpectations(t)
-		// Ensure Publish is never called for the zero-rate device
 		mockClient.AssertNotCalled(t, "Publish", mock.Anything, mock.Anything)
 	})
 
@@ -127,24 +128,20 @@ func TestLoadGenerator_Run(t *testing.T) {
 		mockClient := new(MockClient)
 		mockGenerator := new(MockPayloadGenerator)
 		devices := []*loadgen.Device{
-			{ID: "device-1", MessageRate: 100, PayloadGenerator: mockGenerator}, // High rate
+			{ID: "device-1", MessageRate: 100, PayloadGenerator: mockGenerator},
 		}
-		duration := 1 * time.Second          // Long duration
-		cancelAfter := 50 * time.Millisecond // Short cancellation time
+		duration := 1 * time.Second
+		cancelAfter := 50 * time.Millisecond
 
-		// We use a WaitGroup to ensure the publish goroutine has started.
-		// A sync.Once is used to ensure we only call Done() once, even if Publish is called multiple times.
 		var wg sync.WaitGroup
 		var once sync.Once
 		wg.Add(1)
 
 		mockClient.On("Connect").Return(nil).Once()
 		mockClient.On("Disconnect").Return().Once()
-		// Expect Publish to be called, but it should stop after context is cancelled.
-		// We call wg.Done() only on the first call to Publish.
-		mockClient.On("Publish", mock.Anything, devices[0]).Return(nil).Run(func(args mock.Arguments) {
+		mockClient.On("Publish", mock.Anything, devices[0]).Return(true, nil).Run(func(args mock.Arguments) {
 			once.Do(func() {
-				wg.Done() // Signal that at least one publish attempt was made
+				wg.Done()
 			})
 		}).Maybe()
 
@@ -152,16 +149,12 @@ func TestLoadGenerator_Run(t *testing.T) {
 		lg := loadgen.NewLoadGenerator(mockClient, devices, logger)
 		ctx, cancel := context.WithCancel(context.Background())
 
-		// We don't need to wait for the goroutine to finish, just that it ran.
-		// wg.Wait() in the goroutine was causing a deadlock.
-		// The test now correctly waits for the Run method to complete.
 		go func() {
-			// This goroutine now correctly cancels the context for the Run method
 			time.Sleep(cancelAfter)
 			cancel()
 		}()
 
-		err := lg.Run(ctx, duration)
+		_, err := lg.Run(ctx, duration)
 
 		// Assert
 		assert.NoError(t, err)

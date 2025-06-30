@@ -5,13 +5,13 @@ package loadgen
 import (
 	"context"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/rs/zerolog"
 )
 
 // Device represents a single simulated device in the load test.
-// It is generic and uses a PayloadGenerator to create its payload.
 type Device struct {
 	ID               string
 	MessageRate      float64
@@ -19,11 +19,11 @@ type Device struct {
 }
 
 // LoadGenerator orchestrates the load test.
-// It manages the devices and the client, and runs the test for a specified duration.
 type LoadGenerator struct {
-	client  Client
-	devices []*Device
-	logger  zerolog.Logger
+	client         Client
+	devices        []*Device
+	logger         zerolog.Logger
+	publishedCount int64 // Counter for successful publishes.
 }
 
 // NewLoadGenerator creates a new LoadGenerator.
@@ -35,18 +35,18 @@ func NewLoadGenerator(client Client, devices []*Device, logger zerolog.Logger) *
 	}
 }
 
-// Run starts the load generation process.
-// It starts a goroutine for each device to publish messages at the specified rate.
-func (lg *LoadGenerator) Run(ctx context.Context, duration time.Duration) error {
+// Run now returns the total number of successfully published messages.
+func (lg *LoadGenerator) Run(ctx context.Context, duration time.Duration) (int, error) {
+	atomic.StoreInt64(&lg.publishedCount, 0) // Reset counter for each run.
 	lg.logger.Info().Int("num_devices", len(lg.devices)).Dur("duration", duration).Msg("Starting load generator")
 
 	if err := lg.client.Connect(); err != nil {
 		lg.logger.Error().Err(err).Msg("Failed to connect client")
-		return err
+		return 0, err
 	}
 	defer lg.client.Disconnect()
 
-	ctx, cancel := context.WithTimeout(ctx, duration)
+	runCtx, cancel := context.WithTimeout(ctx, duration)
 	defer cancel()
 
 	var wg sync.WaitGroup
@@ -54,16 +54,17 @@ func (lg *LoadGenerator) Run(ctx context.Context, duration time.Duration) error 
 		wg.Add(1)
 		go func(d *Device) {
 			defer wg.Done()
-			lg.runDevice(ctx, d)
+			lg.runDevice(runCtx, d)
 		}(device)
 	}
 
 	wg.Wait()
-	lg.logger.Info().Msg("Load generator finished")
-	return nil
+	finalCount := int(atomic.LoadInt64(&lg.publishedCount))
+	lg.logger.Info().Int("successful_publishes", finalCount).Msg("Load generator finished")
+	return finalCount, nil
 }
 
-// runDevice runs the message publishing loop for a single device.
+// runDevice now increments the counter on successful publish.
 func (lg *LoadGenerator) runDevice(ctx context.Context, device *Device) {
 	if device.MessageRate <= 0 {
 		lg.logger.Warn().Str("device_id", device.ID).Msg("Device has a message rate of 0, no messages will be sent")
@@ -82,8 +83,12 @@ func (lg *LoadGenerator) runDevice(ctx context.Context, device *Device) {
 			lg.logger.Info().Str("device_id", device.ID).Msg("Device stopping")
 			return
 		case <-ticker.C:
-			if err := lg.client.Publish(ctx, device); err != nil {
+			// Check the boolean result from Publish.
+			if success, err := lg.client.Publish(ctx, device); err != nil {
 				lg.logger.Error().Err(err).Str("device_id", device.ID).Msg("Failed to publish message")
+			} else if success {
+				// Only increment if the publish was successful.
+				atomic.AddInt64(&lg.publishedCount, 1)
 			}
 		}
 	}

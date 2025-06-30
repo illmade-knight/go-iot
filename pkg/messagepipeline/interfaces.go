@@ -2,9 +2,6 @@ package messagepipeline
 
 import (
 	"context"
-	// It's good practice to keep truly shared, cross-domain types in a separate
-	// package. If `BatchedMessage` is only used by the consumer pipeline, it could
-	// even live in this package. For now, we'll assume it's in a shared `types` pkg.
 	"github.com/illmade-knight/go-iot/pkg/types"
 )
 

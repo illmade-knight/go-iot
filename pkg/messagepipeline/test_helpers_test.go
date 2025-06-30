@@ -1,13 +1,46 @@
-package messagepipeline
+package messagepipeline_test
 
 import (
+	"cloud.google.com/go/pubsub"
 	"context"
 	"sync"
+	"testing"
 	"time"
 
 	"github.com/illmade-knight/go-iot/pkg/types"
 	"github.com/rs/zerolog/log"
 )
+
+// receiveSingleMessage is a test helper to wait for one message from a subscription.
+// It is moved here to be accessible by all tests in the package.
+func receiveSingleMessage(t *testing.T, ctx context.Context, sub *pubsub.Subscription, timeout time.Duration) *pubsub.Message {
+	t.Helper()
+	var receivedMsg *pubsub.Message
+	var mu sync.RWMutex
+
+	receiveCtx, receiveCancel := context.WithTimeout(ctx, timeout)
+	defer receiveCancel()
+
+	err := sub.Receive(receiveCtx, func(ctx context.Context, msg *pubsub.Message) {
+		mu.Lock()
+		defer mu.Unlock()
+		if receivedMsg == nil {
+			receivedMsg = msg
+			msg.Ack()
+			receiveCancel()
+		} else {
+			msg.Nack()
+		}
+	})
+
+	if err != nil && err != context.Canceled {
+		t.Logf("Receive loop ended with error: %v", err)
+	}
+
+	mu.RLock()
+	defer mu.RUnlock()
+	return receivedMsg
+}
 
 // ====================================================================================
 // This file contains mocks for the interfaces defined in this package.
