@@ -55,10 +55,12 @@ func TestBigQueryService_ProcessesMessagesSuccessfully(t *testing.T) {
 	}
 
 	msg := types.ConsumedMessage{
-		ID:      "test-msg-1",
-		Payload: payload,
-		Ack:     func() {}, // The batcher will call the OriginalMessage.Ack
-		Nack:    func() {},
+		PublishMessage: types.PublishMessage{
+			ID:      "test-msg-1",
+			Payload: payload,
+		},
+		Ack:  func() {}, // The batcher will call the OriginalMessage.Ack
+		Nack: func() {},
 	}
 	mockConsumer.Push(msg)
 
@@ -98,9 +100,11 @@ func TestBigQueryService_HandlesTransformerError(t *testing.T) {
 
 	var nacked bool
 	msg := types.ConsumedMessage{
-		ID:      "test-msg-2",
-		Payload: []byte("this is not valid json"),
-		Nack:    func() { nacked = true },
+		PublishMessage: types.PublishMessage{
+			ID:      "test-msg-2",
+			Payload: []byte("this is not valid json"),
+		},
+		Nack: func() { nacked = true },
 	}
 	mockConsumer.Push(msg)
 
@@ -137,9 +141,11 @@ func TestBigQueryService_SkipsMessage(t *testing.T) {
 
 	var acked bool
 	msg := types.ConsumedMessage{
-		ID:      "test-msg-3",
-		Payload: []byte("some data to be skipped"),
-		Ack:     func() { acked = true },
+		PublishMessage: types.PublishMessage{
+			ID:      "test-msg-3",
+			Payload: []byte("some data to be skipped"),
+		},
+		Ack: func() { acked = true },
 	}
 	mockConsumer.Push(msg)
 

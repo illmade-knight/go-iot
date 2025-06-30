@@ -79,10 +79,12 @@ func TestProcessingService_ProcessMessage_Success(t *testing.T) {
 
 	ackCalled, nackCalled := false, false
 	msg := types.ConsumedMessage{
-		ID:      "test-msg-1",
-		Payload: []byte("original"),
-		Ack:     func() { ackCalled = true },
-		Nack:    func() { nackCalled = true },
+		PublishMessage: types.PublishMessage{
+			ID:      "test-msg-1",
+			Payload: []byte("original"),
+		},
+		Ack:  func() { ackCalled = true },
+		Nack: func() { nackCalled = true },
 	}
 	consumer.Push(msg)
 
@@ -110,7 +112,11 @@ func TestProcessingService_ProcessMessage_TransformerError(t *testing.T) {
 
 	nackCalled := false
 	var nackMu sync.Mutex
-	msg := types.ConsumedMessage{ID: "test-msg-err", Nack: func() { nackMu.Lock(); nackCalled = true; nackMu.Unlock() }}
+	msg := types.ConsumedMessage{
+		PublishMessage: types.PublishMessage{
+			ID: "test-msg-err",
+		},
+		Nack: func() { nackMu.Lock(); nackCalled = true; nackMu.Unlock() }}
 	consumer.Push(msg)
 
 	assert.Eventually(t, func() bool {
@@ -184,7 +190,8 @@ func TestProcessingService_GracefulShutdownScenarios(t *testing.T) {
 			require.NoError(t, service.Start())
 
 			for i, msgState := range tc.messagesToPush {
-				msg := types.ConsumedMessage{ID: msgState.ID, Payload: []byte(msgState.ID), Ack: msgState.Ack, Nack: msgState.Nack}
+				msg := types.ConsumedMessage{
+					PublishMessage: types.PublishMessage{ID: msgState.ID, Payload: []byte(msgState.ID)}, Ack: msgState.Ack, Nack: msgState.Nack}
 				if i == 1 && blockSignalCh != nil {
 					<-blockSignalCh
 				}

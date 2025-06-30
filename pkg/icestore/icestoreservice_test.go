@@ -41,9 +41,11 @@ func TestIceStorageService_Success(t *testing.T) {
 	}
 
 	msg := types.ConsumedMessage{
-		ID:      "test-id-123", // Give the message a specific ID.
-		Payload: []byte(`{"data":"test"}`),
-		Ack:     func() {},
+		PublishMessage: types.PublishMessage{
+			ID:      "test-id-123", // Give the message a specific ID.
+			Payload: []byte(`{"data":"test"}`),
+		},
+		Ack: func() {},
 	}
 	mockConsumer.Push(msg)
 
@@ -83,8 +85,10 @@ func TestIceStorageService_TransformerError(t *testing.T) {
 	var nacked bool
 	nackChan := make(chan struct{})
 	msg := types.ConsumedMessage{
-		ID:      "ice-msg-err",
-		Payload: []byte(`any-payload`),
+		PublishMessage: types.PublishMessage{
+			ID:      "ice-msg-err",
+			Payload: []byte(`any-payload`),
+		},
 		Nack: func() {
 			nacked = true
 			close(nackChan)
@@ -119,8 +123,10 @@ func TestIceStorageService_Skip(t *testing.T) {
 	var acked bool
 	ackChan := make(chan struct{})
 	msg := types.ConsumedMessage{
-		ID:      "ice-msg-skip",
-		Payload: []byte("null"), // "null" payload should trigger a skip.
+		PublishMessage: types.PublishMessage{
+			ID:      "ice-msg-skip",
+			Payload: []byte("null"), // "null" payload should trigger a skip.
+		},
 		Ack: func() {
 			acked = true
 			close(ackChan)

@@ -93,11 +93,13 @@ func (c *GooglePubsubConsumer) Start(ctx context.Context) error {
 			copy(payloadCopy, msg.Data)
 
 			consumedMsg := types.ConsumedMessage{
-				ID:          msg.ID,
-				Payload:     payloadCopy,
-				PublishTime: msg.PublishTime,
-				Ack:         msg.Ack,
-				Nack:        msg.Nack}
+				PublishMessage: types.PublishMessage{
+					ID:          msg.ID,
+					Payload:     payloadCopy,
+					PublishTime: msg.PublishTime,
+				},
+				Ack:  msg.Ack,
+				Nack: msg.Nack}
 
 			// Enrich message with DeviceInfo from attributes, if present.
 			if uid, ok := msg.Attributes["uid"]; ok {

@@ -231,8 +231,10 @@ func TestGooglePubsubProducer_Lifecycle_And_MessageProduction(t *testing.T) {
 				wgSend.Add(1)
 				messageID := fmt.Sprintf("original-msg-%s-%d", uniqueSuffix, i) // Make message ID unique per message
 				originalMsg := types.ConsumedMessage{
-					ID:      messageID,
-					Payload: []byte(fmt.Sprintf(`{"originalData": "data-%s-%d"}`, uniqueSuffix, i)),
+					PublishMessage: types.PublishMessage{
+						ID:      messageID,
+						Payload: []byte(fmt.Sprintf(`{"originalData": "data-%s-%d"}`, uniqueSuffix, i)),
+					},
 					Ack: func() {
 						ackNackMu.Lock()
 						ackCount++
@@ -423,7 +425,9 @@ func TestGooglePubsubProducer_ShutdownEnsuresFlush(t *testing.T) {
 		wgSend.Add(1)
 		messageID := fmt.Sprintf("flush-msg-%s-%d", uniqueID, i) // Unique message ID
 		originalMsg := types.ConsumedMessage{
-			ID: messageID,
+			PublishMessage: types.PublishMessage{
+				ID: messageID,
+			},
 			Ack: func() {
 				ackNackMu.Lock()
 				ackCount++

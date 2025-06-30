@@ -146,7 +146,9 @@ func TestIceStorageService_Integration(t *testing.T) {
 			consumerCfg := &messagepipeline.GooglePubsubConsumerConfig{
 				ProjectID: testProjectID, SubscriptionID: testSubscriptionID, MaxOutstandingMessages: 10, NumGoroutines: 2,
 			}
-			consumer, err := messagepipeline.NewGooglePubsubConsumer(testCtx, consumerCfg, pubsubConnection.ClientOptions, logger)
+			psClient, err := pubsub.NewClient(ctx, testProjectID, pubsubConnection.ClientOptions...)
+			require.NoError(t, err)
+			consumer, err := messagepipeline.NewGooglePubsubConsumer(consumerCfg, psClient, logger)
 			require.NoError(t, err)
 
 			batcher, err := icestore.NewGCSBatchProcessor(

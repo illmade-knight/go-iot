@@ -85,7 +85,9 @@ func TestBigQueryService_Integration_FullFlow(t *testing.T) {
 
 	// --- Initialize Components with new, refactored structure ---
 	//opts := []option.ClientOption{option.WithEndpoint("localhost:58752"), option.WithoutAuthentication()}
-	consumer, err := messagepipeline.NewGooglePubsubConsumer(ctx, consumerCfg, connection.ClientOptions, logger)
+	psClient, err := pubsub.NewClient(ctx, testProjectID, connection.ClientOptions...)
+	require.NoError(t, err)
+	consumer, err := messagepipeline.NewGooglePubsubConsumer(consumerCfg, psClient, logger)
 	require.NoError(t, err)
 
 	bqClient, err := bigquery.NewClient(ctx, testProjectID, bigqueryConnection.ClientOptions...)

@@ -1,58 +1,67 @@
 package enrichment
 
 import (
-	"fmt"
-
-	"github.com/illmade-knight/go-iot/pkg/device"          // Changed import path
-	"github.com/illmade-knight/go-iot/pkg/messagepipeline" // No change
+	"context"
+	"github.com/illmade-knight/go-iot/pkg/device"
+	"github.com/illmade-knight/go-iot/pkg/messagepipeline"
 	"github.com/illmade-knight/go-iot/pkg/types"
 	"github.com/rs/zerolog"
 )
 
-// EnrichedMessage represents the structure of a message after enrichment.
-// It embeds the original ConsumedMessage and adds enrichment-specific fields.
-type EnrichedMessage struct {
-	types.ConsumedMessage
-	// Device metadata fields
-	ClientID   string `json:"clientID"`
-	LocationID string `json:"locationID"`
-	Category   string `json:"category"`
-	// Add other enriched data fields as needed, e.g., product info, user info
-	// linkedData map[string]interface{} `json:"linkedData,omitempty"` // For generic linked data
-}
-
-// DeviceMetadataFetcher is an interface for fetching device metadata.
-// This allows different implementations (Firestore, Redis, etc.) to be used interchangeably.
-// Note: This is now just an alias for device.DeviceMetadataFetcher.
+// DeviceMetadataFetcher is an alias for the fetcher interface.
 type DeviceMetadataFetcher = device.DeviceMetadataFetcher
 
 // NewMessageEnricher creates the MessageTransformer function for enrichment.
-// It returns a function that conforms to the messagepipeline.MessageTransformer signature.
-func NewMessageEnricher(fetcher DeviceMetadataFetcher, logger zerolog.Logger) messagepipeline.MessageTransformer[EnrichedMessage] {
+// It now uses the new, simpler publisher for dead-lettering.
+func NewMessageEnricher(
+	fetcher DeviceMetadataFetcher,
+	deadLetterPublisher messagepipeline.SimplePublisher, // Use the new simple publisher interface
+	logger zerolog.Logger,
+) messagepipeline.MessageTransformer[types.PublishMessage] {
 
-	return func(msg types.ConsumedMessage) (transformedPayload *EnrichedMessage, skip bool, err error) {
-		if msg.DeviceInfo == nil || msg.DeviceInfo.UID == "" {
-			logger.Warn().Str("msg_id", msg.ID).Msg("Message has no device UID for enrichment, skipping lookup.")
-			return &EnrichedMessage{ConsumedMessage: msg}, false, nil // Pass original message, don't skip pipeline
+	return func(msg types.ConsumedMessage) (*types.PublishMessage, bool, error) {
+		// handleFailure now uses the simple publisher.
+		handleFailure := func(reason, eui string) {
+			if deadLetterPublisher != nil {
+				attributes := map[string]string{
+					"error":      reason,
+					"device_eui": eui,
+					"msg_id":     msg.ID,
+				}
+				// The call is now a simple, direct Publish.
+				_ = deadLetterPublisher.Publish(context.Background(), msg.Payload, attributes)
+			}
+			msg.Ack()
 		}
 
-		deviceEUI := msg.DeviceInfo.UID // Assuming UID is the deviceEUI
+		// The service assumes the initial consumer has populated DeviceInfo from attributes.
+		if msg.DeviceInfo == nil || msg.DeviceInfo.UID == "" {
+			handleFailure("message_missing_uid_attribute", "")
+			return nil, true, nil // Return skip=true to Ack the message
+		}
+
+		deviceEUI := msg.DeviceInfo.UID
 		clientID, locationID, category, err := fetcher(deviceEUI)
 		if err != nil {
 			logger.Error().Err(err).Str("device_eui", deviceEUI).Str("msg_id", msg.ID).Msg("Failed to fetch device metadata for enrichment.")
-			// If device.ErrMetadataNotFound, you might choose to ACK and skip (false, true)
-			// or NACK (false, error). Nacking means retrying.
-			// For this example, let's Nack if enrichment fails.
-			return &EnrichedMessage{}, false, fmt.Errorf("failed to enrich message for EUI %s: %w", deviceEUI, err)
+			handleFailure("metadata_fetch_failed", deviceEUI)
+			return nil, true, nil // Return skip=true to Ack the message
 		}
 
-		enrichedMsg := &EnrichedMessage{
-			ConsumedMessage: msg,
-			ClientID:        clientID,
-			LocationID:      locationID,
-			Category:        category,
+		// On success, create a new PublishMessage with the updated DeviceInfo.
+		enrichedMsg := &types.PublishMessage{
+			ID:          msg.ID,
+			Payload:     msg.Payload,
+			PublishTime: msg.PublishTime,
+			DeviceInfo: &types.DeviceInfo{
+				UID:        deviceEUI,
+				Name:       clientID,
+				Location:   locationID,
+				ServiceTag: category, // Assuming category maps to ServiceTag
+			},
 		}
+
 		logger.Debug().Str("msg_id", msg.ID).Str("device_eui", deviceEUI).Msg("Message enriched with device metadata.")
-		return enrichedMsg, false, nil // Don't skip, process the enriched message
+		return enrichedMsg, false, nil // Return the enriched message for the main pipeline
 	}
 }
