@@ -160,6 +160,7 @@ type MockMessageProcessor[T any] struct {
 	mu                     sync.Mutex
 	wg                     sync.WaitGroup
 	startCount             int
+	startMu                sync.Mutex
 	stopCount              int
 	processDelay           time.Duration
 	processingHook         func(msg *types.BatchedMessage[T])
@@ -184,7 +185,7 @@ func (m *MockMessageProcessor[T]) Input() chan<- *types.BatchedMessage[T] {
 }
 
 // Start begins the processor's operations.
-func (m *MockMessageProcessor[T]) Start() {
+func (m *MockMessageProcessor[T]) Start(ctx context.Context) {
 	m.mu.Lock()
 	m.startCount++
 	m.mu.Unlock()
@@ -221,6 +222,13 @@ func (m *MockMessageProcessor[T]) Start() {
 	}()
 }
 
+// GetStartCount returns the number of times Start() was called.
+func (m *MockMessageProcessor[T]) GetStartCount() int {
+	m.startMu.Lock()
+	defer m.startMu.Unlock()
+	return m.startCount
+}
+
 // Stop gracefully shuts down the processor.
 func (m *MockMessageProcessor[T]) Stop() {
 	m.mu.Lock()
@@ -228,6 +236,12 @@ func (m *MockMessageProcessor[T]) Stop() {
 	m.mu.Unlock()
 	close(m.InputChan)
 	m.wg.Wait()
+}
+
+func (m *MockMessageProcessor[T]) GetStopCount() int {
+	m.startMu.Lock()
+	defer m.startMu.Unlock()
+	return m.stopCount
 }
 
 // GetReceived returns a copy of the messages received by the processor.

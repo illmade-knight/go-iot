@@ -19,7 +19,8 @@ type MessageProcessor[T any] interface {
 	// Input returns a write-only channel for sending transformed messages to the processor.
 	Input() chan<- *types.BatchedMessage[T]
 	// Start begins the processor's operations (e.g., its batching worker).
-	Start()
+	// It accepts a context to manage its lifecycle.
+	Start(ctx context.Context) // CHANGED: Added context.Context
 	// Stop gracefully shuts down the processor, ensuring any buffered items are handled.
 	Stop()
 }
@@ -28,7 +29,7 @@ type MessageProcessor[T any] interface {
 // It is responsible for fetching raw messages from the broker.
 type MessageConsumer interface {
 	// Messages returns a read-only channel from which raw messages can be consumed.
-	Messages() <-chan types.ConsumedMessage // Use the locally defined type.
+	Messages() <-chan types.ConsumedMessage
 	// Start initiates the consumption of messages.
 	Start(ctx context.Context) error
 	// Stop gracefully ceases message consumption.
@@ -45,5 +46,5 @@ type MessageConsumer interface {
 // PublishTime, enabling more robust processing logic.
 //
 // It returns the transformed payload, a boolean to indicate if the message
-// should be skipped, and an error if the transformation fails.
+// should be skipped, and an.
 type MessageTransformer[T any] func(msg types.ConsumedMessage) (payload *T, skip bool, err error)

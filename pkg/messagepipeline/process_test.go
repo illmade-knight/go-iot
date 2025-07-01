@@ -1,6 +1,7 @@
 package messagepipeline_test
 
 import (
+	"context"
 	"errors"
 	"sync"
 	"testing"
@@ -42,33 +43,50 @@ func newTestService[T any](numWorkers, consumerBuffer, processorBuffer int) (*me
 func TestProcessingService_Lifecycle(t *testing.T) {
 	service, consumer, processor := newTestService[processTestPayload](1, 10, 10)
 
-	err := service.Start()
+	// Provide a context for the service Start, which will be passed to consumer/processor
+	serviceCtx, serviceCancel := context.WithCancel(context.Background())
+	defer serviceCancel() // Ensure context is cancelled on test exit
+
+	err := service.Start(serviceCtx) // Now starts with internal shutdownCtx
 	require.NoError(t, err)
 
+	// Give components a moment to start their goroutines before checking counts
+	time.Sleep(10 * time.Millisecond)
+
 	assert.Equal(t, 1, consumer.GetStartCount())
-	assert.Equal(t, 1, processor.startCount)
+	assert.Equal(t, 1, processor.GetStartCount())
 
 	service.Stop()
 
+	// Give components a moment to stop
+	time.Sleep(10 * time.Millisecond)
+
 	assert.Equal(t, 1, consumer.GetStopCount())
-	assert.Equal(t, 1, processor.stopCount)
+	assert.Equal(t, 1, processor.GetStopCount())
 }
 
 func TestProcessingService_ProcessMessage_Success(t *testing.T) {
 	service, consumer, processor := newTestService[processTestPayload](1, 10, 10)
 
-	err := service.Start()
+	serviceCtx, serviceCancel := context.WithCancel(context.Background())
+	defer serviceCancel()
+
+	err := service.Start(serviceCtx)
 	require.NoError(t, err)
 	defer service.Stop()
 
+	// Ensure the processor will call Ack/Nack (as the ProcessingService now manages it)
+	processor.SetAckOnProcess(true) // Processor mock now responsible for Ack/Nack on messages it processes.
+
 	ackCalled, nackCalled := false, false
+	var ackNackMu sync.Mutex // Initialized correctly
 	msg := types.ConsumedMessage{
 		PublishMessage: types.PublishMessage{
 			ID:      "test-msg-1",
 			Payload: []byte("original"),
 		},
-		Ack:  func() { ackCalled = true },
-		Nack: func() { nackCalled = true },
+		Ack:  func() { ackNackMu.Lock(); ackCalled = true; ackNackMu.Unlock() },
+		Nack: func() { ackNackMu.Lock(); nackCalled = true; ackNackMu.Unlock() },
 	}
 	consumer.Push(msg)
 
@@ -78,8 +96,13 @@ func TestProcessingService_ProcessMessage_Success(t *testing.T) {
 
 	received := processor.GetReceived()
 	assert.Equal(t, "original", received[0].Payload.Data)
-	assert.False(t, ackCalled, "Ack should not be called by the service on success")
-	assert.False(t, nackCalled, "Nack should not be called by the service on success")
+
+	require.Eventually(t, func() bool { // Wait for Ack to be called by processor mock
+		ackNackMu.Lock()
+		defer ackNackMu.Unlock()
+		return ackCalled
+	}, time.Second, 10*time.Millisecond, "Ack was not called for successful message")
+	assert.False(t, nackCalled, "Nack should not be called")
 }
 
 // CORRECTED: This test now correctly injects the failing transformer at construction time.
@@ -94,12 +117,15 @@ func TestProcessingService_ProcessMessage_TransformerError(t *testing.T) {
 	service, err := messagepipeline.NewProcessingService[processTestPayload](1, consumer, processor, failingTransformer, zerolog.Nop())
 	require.NoError(t, err)
 
-	err = service.Start()
+	serviceCtx, serviceCancel := context.WithCancel(context.Background())
+	defer serviceCancel()
+
+	err = service.Start(serviceCtx)
 	require.NoError(t, err)
 	defer service.Stop()
 
 	nackCalled := false
-	var nackMu sync.Mutex
+	var nackMu sync.Mutex // Initialized correctly
 	msg := types.ConsumedMessage{
 		PublishMessage: types.PublishMessage{ID: "test-msg-err"},
 		Nack:           func() { nackMu.Lock(); nackCalled = true; nackMu.Unlock() },
@@ -130,12 +156,15 @@ func TestProcessingService_ProcessMessage_Skip(t *testing.T) {
 	service, err := messagepipeline.NewProcessingService[processTestPayload](1, consumer, processor, skippingTransformer, zerolog.Nop())
 	require.NoError(t, err)
 
-	err = service.Start()
+	serviceCtx, serviceCancel := context.WithCancel(context.Background())
+	defer serviceCancel()
+
+	err = service.Start(serviceCtx)
 	require.NoError(t, err)
 	defer service.Stop()
 
 	ackCalled := false
-	var ackMu sync.Mutex
+	var ackMu sync.Mutex // Initialized correctly
 	msg := types.ConsumedMessage{
 		PublishMessage: types.PublishMessage{ID: "test-msg-skip"},
 		Ack:            func() { ackMu.Lock(); ackCalled = true; ackMu.Unlock() },

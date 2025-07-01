@@ -61,7 +61,7 @@ func TestMqttClient_Publish_PayloadFormat(t *testing.T) {
 	}
 
 	// Act
-	err = publisher.Publish(ctx, device)
+	_, err = publisher.Publish(ctx, device)
 	require.NoError(t, err)
 
 	// Assert

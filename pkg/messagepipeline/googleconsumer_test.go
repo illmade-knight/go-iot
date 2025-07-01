@@ -23,6 +23,7 @@ func TestGooglePubsubConsumer_Lifecycle_And_MessageReception(t *testing.T) {
 	topicID := "test-consumer-topic"
 	subID := "test-consumer-sub"
 
+	// Context for the entire test's lifecycle
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
@@ -41,15 +42,17 @@ func TestGooglePubsubConsumer_Lifecycle_And_MessageReception(t *testing.T) {
 
 	client, err := pubsub.NewClient(ctx, projectID, clientOptions...)
 	require.NoError(t, err)
-	defer client.Close()
+	// REMOVED: client.Close() is no longer here. It's now closed by the parent test's cleanup (or orchestrator).
 
 	consumer, err := messagepipeline.NewGooglePubsubConsumer(cfg, client, zerolog.Nop())
 	require.NoError(t, err)
 	require.NotNil(t, consumer)
 
+	// Context for the consumer's operational lifecycle (passed to consumer.Start)
 	consumerCtx, consumerCancel := context.WithCancel(context.Background())
 	defer consumerCancel()
-	err = consumer.Start(consumerCtx)
+
+	err = consumer.Start(consumerCtx) // Pass the consumerCtx to Start
 	require.NoError(t, err)
 
 	topic := client.Topic(topicID)
@@ -79,13 +82,14 @@ func TestGooglePubsubConsumer_Lifecycle_And_MessageReception(t *testing.T) {
 	require.NotNil(t, receivedMsg.DeviceInfo)
 	assert.Equal(t, "device-123", receivedMsg.DeviceInfo.UID)
 	assert.Equal(t, "garden", receivedMsg.DeviceInfo.Location)
-	receivedMsg.Ack()
+	receivedMsg.Ack() // Acknowledge the message here.
 
+	// Explicitly stop the consumer and wait for it to be done.
 	err = consumer.Stop()
 	require.NoError(t, err)
 
 	select {
-	case <-consumer.Done():
+	case <-consumer.Done(): // Wait for the consumer's Done channel to confirm full stop
 	case <-time.After(5 * time.Second):
 		t.Fatal("timed out waiting for consumer to stop")
 	}

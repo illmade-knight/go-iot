@@ -20,10 +20,10 @@ type ProcessingService[T any] struct {
 	numWorkers   int
 	consumer     MessageConsumer
 	processor    MessageProcessor[T]
-	transformer  MessageTransformer[T] // <-- REPLACED: Was previously 'decoder PayloadDecoder[T]'
+	transformer  MessageTransformer[T]
 	logger       zerolog.Logger
 	wg           sync.WaitGroup
-	shutdownCtx  context.Context
+	shutdownCtx  context.Context // This will now be a child of the context passed to Start()
 	shutdownFunc context.CancelFunc
 }
 
@@ -34,7 +34,7 @@ func NewProcessingService[T any](
 	numWorkers int,
 	consumer MessageConsumer,
 	processor MessageProcessor[T],
-	transformer MessageTransformer[T], // <-- REPLACED: This now accepts the new, more powerful interface.
+	transformer MessageTransformer[T],
 	logger zerolog.Logger,
 ) (*ProcessingService[T], error) {
 	// In a production library, you would add nil checks for the parameters here.
@@ -42,31 +42,33 @@ func NewProcessingService[T any](
 		numWorkers = 5 // Default to 5 workers if an invalid number is provided.
 	}
 
-	shutdownCtx, shutdownFunc := context.WithCancel(context.Background())
+	// No shutdownCtx/Func initialization here anymore; it's done in Start().
 
 	return &ProcessingService[T]{
-		numWorkers:   numWorkers,
-		consumer:     consumer,
-		processor:    processor,
-		transformer:  transformer, // <-- Use the new transformer
-		logger:       logger.With().Str("service", "ProcessingService").Logger(),
-		shutdownCtx:  shutdownCtx,
-		shutdownFunc: shutdownFunc,
+		numWorkers:  numWorkers,
+		consumer:    consumer,
+		processor:   processor,
+		transformer: transformer,
+		logger:      logger.With().Str("service", "ProcessingService").Logger(),
+		// shutdownCtx and shutdownFunc will be set in Start()
 	}, nil
 }
 
-// Start begins the service operation. It starts the processor and the consumer,
-// then spins up a pool of workers to process messages.
-func (s *ProcessingService[T]) Start() error {
+// Start begins the service operation. It accepts a context for its own lifecycle.
+// It starts the processor and the consumer, then spins up a pool of workers to process messages.
+func (s *ProcessingService[T]) Start(ctx context.Context) error { // CORRECTED: Added ctx parameter
 	s.logger.Info().Msg("Starting generic ProcessingService...")
 
-	// Start the processor first, so it's ready to receive items.
-	s.processor.Start()
+	// Initialize the service's shutdown context from the provided context.
+	s.shutdownCtx, s.shutdownFunc = context.WithCancel(ctx) // Now derived from passed context
+
+	// Start the processor first, passing the service's shutdown context to it.
+	s.processor.Start(s.shutdownCtx) // Already passes shutdownCtx
 
 	// Start the consumer, passing the service's shutdown context to it.
-	if err := s.consumer.Start(s.shutdownCtx); err != nil {
+	if err := s.consumer.Start(s.shutdownCtx); err != nil { // Already passes shutdownCtx
 		// If the consumer fails to start, stop the processor to clean up.
-		s.processor.Stop()
+		s.processor.Stop() // Processor doesn't need context for Stop
 		return fmt.Errorf("failed to start message consumer: %w", err)
 	}
 	s.logger.Info().Msg("Message consumer started.")
@@ -85,11 +87,11 @@ func (s *ProcessingService[T]) Start() error {
 // worker is the main loop for each concurrent worker.
 func (s *ProcessingService[T]) worker(workerID int) {
 	defer s.wg.Done()
-	s.logger.Debug().Int("worker_id", workerID).Msg("Processing worker started.")
+	s.logger.Debug().Int("worker_id", workerID).Msg("Processing worker shutting down.")
 
 	for {
 		select {
-		case <-s.shutdownCtx.Done():
+		case <-s.shutdownCtx.Done(): // Worker listens to service's shutdown context
 			s.logger.Info().Int("worker_id", workerID).Msg("Processing worker shutting down.")
 			return
 		case msg, ok := <-s.consumer.Messages():
@@ -125,14 +127,14 @@ func (s *ProcessingService[T]) processConsumedMessage(msg types.ConsumedMessage,
 	// The `types.BatchedMessage` wrapper links the original message (for Ack/Nack)
 	// with the successfully transformed payload.
 	batchedMsg := &types.BatchedMessage[T]{
-		OriginalMessage: msg, // Note: The type of this field should be consumers.ConsumedMessage
+		OriginalMessage: msg,
 		Payload:         transformedPayload,
 	}
 
 	select {
 	case s.processor.Input() <- batchedMsg:
 		s.logger.Debug().Str("msg_id", msg.ID).Msg("Payload sent to processor.")
-	case <-s.shutdownCtx.Done():
+	case <-s.shutdownCtx.Done(): // If service shuts down while sending to processor, Nack.
 		s.logger.Warn().Str("msg_id", msg.ID).Msg("Shutdown in progress, Nacking message.")
 		msg.Nack()
 	}
@@ -143,7 +145,7 @@ func (s *ProcessingService[T]) Stop() {
 	s.logger.Info().Msg("Stopping generic ProcessingService...")
 
 	// 1. Signal all workers and the consumer to begin shutting down.
-	s.shutdownFunc()
+	s.shutdownFunc() // This cancels s.shutdownCtx
 
 	// 2. Wait for the consumer to fully stop. This ensures no new messages are processed.
 	s.logger.Info().Msg("Waiting for message consumer to stop...")
@@ -159,7 +161,7 @@ func (s *ProcessingService[T]) Stop() {
 
 	// 4. Stop the processor. This will flush any remaining buffered items.
 	if s.processor != nil {
-		s.processor.Stop()
+		s.processor.Stop() // Processor does not need context for Stop
 	}
 
 	s.logger.Info().Msg("Generic ProcessingService stopped gracefully.")

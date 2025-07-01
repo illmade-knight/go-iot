@@ -80,13 +80,15 @@ func NewGooglePubsubConsumer(cfg *GooglePubsubConsumerConfig, client *pubsub.Cli
 func (c *GooglePubsubConsumer) Messages() <-chan types.ConsumedMessage { return c.outputChan }
 func (c *GooglePubsubConsumer) Start(ctx context.Context) error {
 	c.logger.Info().Msg("Starting Pub/Sub message consumption...")
-	receiveCtx, cancel := context.WithCancel(ctx)
+	receiveCtx, cancel := context.WithCancel(ctx) // Derived from the passed context
 	c.cancelSubscription = cancel
 	c.wg.Add(1)
 	go func() {
 		defer c.wg.Done()
-		defer close(c.outputChan)
+		defer close(c.outputChan) // Close output channel when done
+		defer close(c.doneChan)   // Close done channel when done
 		defer c.logger.Info().Msg("Pub/Sub Receive goroutine stopped.")
+
 		c.logger.Info().Msg("Pub/Sub Receive goroutine started.")
 		err := c.subscription.Receive(receiveCtx, func(ctx context.Context, msg *pubsub.Message) {
 			payloadCopy := make([]byte, len(msg.Data))
@@ -98,8 +100,9 @@ func (c *GooglePubsubConsumer) Start(ctx context.Context) error {
 					Payload:     payloadCopy,
 					PublishTime: msg.PublishTime,
 				},
-				Ack:  msg.Ack,
-				Nack: msg.Nack}
+				Attributes: msg.Attributes,
+				Ack:        msg.Ack,
+				Nack:       msg.Nack}
 
 			// Enrich message with DeviceInfo from attributes, if present.
 			if uid, ok := msg.Attributes["uid"]; ok {
@@ -111,18 +114,15 @@ func (c *GooglePubsubConsumer) Start(ctx context.Context) error {
 
 			select {
 			case c.outputChan <- consumedMsg:
-			case <-receiveCtx.Done():
-				msg.Nack()
-				c.logger.Warn().Str("msg_id", msg.ID).Msg("Consumer stopping, Nacking message.")
-			case <-ctx.Done():
-				msg.Nack()
-				c.logger.Warn().Str("msg_id", msg.ID).Msg("Outer context done, Nacking message.")
+				// Message sent successfully
+			case <-receiveCtx.Done(): // Use receiveCtx for worker specific cancellation
+				msg.Nack() // Nack because the consumer is shutting down
+				c.logger.Warn().Str("msg_id", msg.ID).Msg("Consumer stopping, Nacking message due to receive context done.")
 			}
 		})
-		if err != nil && !errors.Is(err, context.Canceled) {
+		if err != nil && !errors.Is(err, context.Canceled) { // context.Canceled is expected on graceful shutdown
 			c.logger.Error().Err(err).Msg("Pub/Sub Receive call exited with error")
 		}
-		close(c.doneChan)
 	}()
 	return nil
 }
@@ -130,21 +130,15 @@ func (c *GooglePubsubConsumer) Stop() error {
 	c.stopOnce.Do(func() {
 		c.logger.Info().Msg("Stopping Pub/Sub consumer...")
 		if c.cancelSubscription != nil {
-			c.cancelSubscription()
+			c.cancelSubscription() // Signal receiveCtx to cancel
 		}
 		select {
-		case <-c.Done():
+		case <-c.doneChan: // Wait for the internal goroutine to close doneChan
 			c.logger.Info().Msg("Pub/Sub Receive goroutine confirmed stopped.")
 		case <-time.After(30 * time.Second):
 			c.logger.Error().Msg("Timeout waiting for Pub/Sub Receive goroutine to stop.")
 		}
-		if c.client != nil {
-			if err := c.client.Close(); err != nil {
-				c.logger.Error().Err(err).Msg("Error closing Pub/Sub client")
-			} else {
-				c.logger.Info().Msg("Pub/Sub client closed.")
-			}
-		}
+		// REMOVED: c.client.Close() is no longer here. The client should be managed by the orchestrator.
 	})
 	return nil
 }

@@ -7,6 +7,8 @@ import (
 type ConsumedMessage struct {
 	PublishMessage
 
+	Attributes map[string]string
+
 	Ack func()
 	// Nack is a function to call to signal that processing has failed and the
 	// message should be re-queued or sent to a dead-letter queue.
