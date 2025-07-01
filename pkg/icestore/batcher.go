@@ -54,7 +54,7 @@ func NewBatcher(
 }
 
 // Start begins the batching worker goroutine.
-func (b *Batcher) Start() {
+func (b *Batcher) Start(_ context.Context) {
 	b.logger.Info().
 		Int("batch_size", b.config.BatchSize).
 		Dur("flush_timeout", b.config.FlushTimeout).

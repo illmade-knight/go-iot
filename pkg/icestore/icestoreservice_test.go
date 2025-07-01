@@ -27,7 +27,7 @@ func TestIceStorageService_Success(t *testing.T) {
 	require.NoError(t, err)
 
 	// Act
-	err = service.Start()
+	err = service.Start(context.Background())
 	require.NoError(t, err)
 	defer service.Stop()
 
@@ -78,7 +78,7 @@ func TestIceStorageService_TransformerError(t *testing.T) {
 
 	service, err := NewIceStorageService(1, mockConsumer, batcher, errorTransformer, logger)
 	require.NoError(t, err)
-	err = service.Start()
+	err = service.Start(context.Background())
 	require.NoError(t, err)
 	defer service.Stop()
 
@@ -116,7 +116,7 @@ func TestIceStorageService_Skip(t *testing.T) {
 
 	service, err := NewIceStorageService(1, mockConsumer, batcher, ArchivalTransformer, logger)
 	require.NoError(t, err)
-	err = service.Start()
+	err = service.Start(context.Background())
 	require.NoError(t, err)
 	defer service.Stop()
 

@@ -59,7 +59,7 @@ func NewBatcher[T any](
 }
 
 // Start begins the batching worker. This is part of the MessageProcessor interface.
-func (b *BatchInserter[T]) Start() {
+func (b *BatchInserter[T]) Start(_ context.Context) {
 	b.logger.Info().
 		Int("batch_size", b.config.BatchSize).
 		Dur("flush_timeout", b.config.FlushTimeout).

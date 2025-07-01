@@ -40,7 +40,7 @@ func TestBigQueryService_ProcessesMessagesSuccessfully(t *testing.T) {
 	require.NoError(t, err)
 
 	// Act
-	err = service.Start()
+	err = service.Start(context.Background())
 	require.NoError(t, err)
 
 	payload, err := json.Marshal(&testPayload{ID: 101, Data: "hello"})
@@ -95,7 +95,7 @@ func TestBigQueryService_HandlesTransformerError(t *testing.T) {
 	require.NoError(t, err)
 
 	// Act
-	err = service.Start()
+	err = service.Start(context.Background())
 	require.NoError(t, err)
 
 	var nacked bool
@@ -136,7 +136,7 @@ func TestBigQueryService_SkipsMessage(t *testing.T) {
 	require.NoError(t, err)
 
 	// Act
-	err = service.Start()
+	err = service.Start(context.Background())
 	require.NoError(t, err)
 
 	var acked bool

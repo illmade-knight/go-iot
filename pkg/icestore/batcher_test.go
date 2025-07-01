@@ -54,7 +54,7 @@ func TestBatcher_BatchSizeTrigger(t *testing.T) {
 	}
 
 	batcher := NewBatcher(config, mockUploader, logger)
-	batcher.Start()
+	batcher.Start(context.Background())
 	defer batcher.Stop()
 
 	for i := 0; i < 3; i++ {
@@ -80,7 +80,7 @@ func TestBatcher_FlushTimeoutTrigger(t *testing.T) {
 	}
 
 	batcher := NewBatcher(config, mockUploader, logger)
-	batcher.Start()
+	batcher.Start(context.Background())
 	defer batcher.Stop()
 
 	for i := 0; i < 2; i++ {
@@ -106,7 +106,7 @@ func TestBatcher_StopFlushesFinalBatch(t *testing.T) {
 	}
 
 	batcher := NewBatcher(config, mockUploader, logger)
-	batcher.Start()
+	batcher.Start(context.Background())
 
 	for i := 0; i < 4; i++ {
 		batcher.Input() <- &types.BatchedMessage[ArchivalData]{
@@ -153,7 +153,7 @@ func TestBatcher_AckNackLogic(t *testing.T) {
 		}
 		config := &BatcherConfig{BatchSize: 1, FlushTimeout: time.Second}
 		batcher := NewBatcher(config, mockUploader, logger)
-		batcher.Start()
+		batcher.Start(context.Background())
 		defer batcher.Stop()
 
 		msg, wg, ack, nack := createMessage()
@@ -174,7 +174,7 @@ func TestBatcher_AckNackLogic(t *testing.T) {
 		}
 		config := &BatcherConfig{BatchSize: 1, FlushTimeout: time.Second}
 		batcher := NewBatcher(config, mockUploader, logger)
-		batcher.Start()
+		batcher.Start(context.Background())
 		defer batcher.Stop()
 
 		msg, wg, ack, nack := createMessage()

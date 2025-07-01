@@ -26,7 +26,7 @@ func TestBatchInserter_BatchSizeTrigger(t *testing.T) {
 	}
 
 	batcher := bqstore.NewBatcher[testPayload](config, mockInserter, logger)
-	batcher.Start()
+	batcher.Start(context.Background())
 	defer batcher.Stop()
 
 	// Send 3 messages, which should trigger an immediate flush.
@@ -55,7 +55,7 @@ func TestBatchInserter_FlushTimeoutTrigger(t *testing.T) {
 	}
 
 	batcher := bqstore.NewBatcher[testPayload](config, mockInserter, logger)
-	batcher.Start()
+	batcher.Start(context.Background())
 	defer batcher.Stop()
 
 	// Send 2 messages, fewer than the batch size.
@@ -84,7 +84,7 @@ func TestBatchInserter_StopFlushesFinalBatch(t *testing.T) {
 	}
 
 	batcher := bqstore.NewBatcher[testPayload](config, mockInserter, logger)
-	batcher.Start()
+	batcher.Start(context.Background())
 
 	// Send a partial batch.
 	for i := 0; i < 4; i++ {
@@ -113,7 +113,7 @@ func TestBatchInserter_AckNackLogic(t *testing.T) {
 		}
 		config := &bqstore.BatchInserterConfig{BatchSize: 2, FlushTimeout: time.Second}
 		batcher := bqstore.NewBatcher[testPayload](config, mockInserter, logger)
-		batcher.Start()
+		batcher.Start(context.Background())
 		defer batcher.Stop()
 
 		var ackCount, nackCount int
@@ -148,7 +148,7 @@ func TestBatchInserter_AckNackLogic(t *testing.T) {
 		}
 		config := &bqstore.BatchInserterConfig{BatchSize: 2, FlushTimeout: time.Second}
 		batcher := bqstore.NewBatcher[testPayload](config, mockInserter, logger)
-		batcher.Start()
+		batcher.Start(context.Background())
 		defer batcher.Stop()
 
 		var ackCount, nackCount int
