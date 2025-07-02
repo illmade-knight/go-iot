@@ -144,28 +144,32 @@ func (s *ProcessingService[T]) processConsumedMessage(msg types.ConsumedMessage,
 func (s *ProcessingService[T]) Stop() {
 	s.logger.Info().Msg("Stopping generic ProcessingService...")
 
-	// 1. Signal all workers and components to begin shutting down.
-	s.shutdownFunc()
+	// 1. Stop the consumer first. This is the most critical change.
+	// Stopping the consumer will cancel its Receive loop and cause its output
+	// channel to close after any in-flight messages are sent.
+	s.logger.Info().Msg("Stopping message consumer...")
+	if s.consumer != nil {
+		s.consumer.Stop()
+	}
 
-	// 2. Wait for all processing workers to finish their current tasks.
-	// They will finish because the consumer's channel will close or their context is canceled.
+	// 2. Now, wait for the workers to finish.
+	// They will naturally exit because the channel they are reading from
+	// (`s.consumer.Messages()`) will be closed by the consumer's shutdown process.
 	s.logger.Info().Msg("Waiting for processing workers to complete...")
 	s.wg.Wait()
 	s.logger.Info().Msg("All processing workers completed.")
 
-	// 3. NOW, stop the processor. Since all workers are done, nothing more will be sent to it.
+	// 3. With the pipeline drained, stop the final processor.
 	s.logger.Info().Msg("Stopping message processor...")
 	if s.processor != nil {
 		s.processor.Stop()
 	}
 	s.logger.Info().Msg("Message processor stopped.")
 
-	// 4. Finally, confirm the consumer is fully stopped.
-	s.logger.Info().Msg("Waiting for message consumer to stop...")
-	if s.consumer != nil {
-		<-s.consumer.Done()
+	// 4. The initial context cancellation can now be a final cleanup step.
+	if s.shutdownFunc != nil {
+		s.shutdownFunc()
 	}
-	s.logger.Info().Msg("Message consumer stopped.")
 
 	s.logger.Info().Msg("Generic ProcessingService stopped gracefully.")
 }
