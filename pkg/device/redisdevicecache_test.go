@@ -1,3 +1,5 @@
+//go:build integration
+
 package device_test // Changed package name
 
 import (

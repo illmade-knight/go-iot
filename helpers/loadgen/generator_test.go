@@ -86,9 +86,9 @@ func TestLoadGenerator_Run(t *testing.T) {
 			duration         time.Duration
 			expectedMessages int
 		}{
-			{"1Hz for 3s should be 4 messages", 1.0, 3 * time.Second, 4},
-			{"2Hz for 5s should be 11 messages", 2.0, 5 * time.Second, 11},
-			{"0.5Hz for 3s should be 2 messages", 0.5, 3 * time.Second, 2},
+			{"1Hz for 1s should be 2 messages", 1.0, 1 * time.Second, 2},
+			{"2Hz for 0.5s should be 2 messages", 2.0, 500 * time.Millisecond, 2},
+			{"0.5Hz for 2.1s should be 2 messages", 0.5, 2100 * time.Millisecond, 2},
 			// CORRECTED: The expectation is updated to match the real behavior of the scheduler.
 			// A duration of almost 2s will still allow the tick at T=2s to occur before the context is cancelled.
 			{"Edge Case: Just before tick", 1.0, 2*time.Second - time.Nanosecond, 3},

@@ -164,7 +164,7 @@ func TestIceStorageService_Integration(t *testing.T) {
 
 			// --- Run the Service ---
 			go func() {
-				err := service.Start()
+				err := service.Start(ctx)
 				// Service may return error on shutdown, which is OK.
 				if err != nil && !errors.Is(err, context.Canceled) {
 					t.Logf("Service.Start() returned an unexpected error: %v", err)

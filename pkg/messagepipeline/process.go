@@ -144,25 +144,28 @@ func (s *ProcessingService[T]) processConsumedMessage(msg types.ConsumedMessage,
 func (s *ProcessingService[T]) Stop() {
 	s.logger.Info().Msg("Stopping generic ProcessingService...")
 
-	// 1. Signal all workers and the consumer to begin shutting down.
-	s.shutdownFunc() // This cancels s.shutdownCtx
+	// 1. Signal all workers and components to begin shutting down.
+	s.shutdownFunc()
 
-	// 2. Wait for the consumer to fully stop. This ensures no new messages are processed.
+	// 2. Wait for all processing workers to finish their current tasks.
+	// They will finish because the consumer's channel will close or their context is canceled.
+	s.logger.Info().Msg("Waiting for processing workers to complete...")
+	s.wg.Wait()
+	s.logger.Info().Msg("All processing workers completed.")
+
+	// 3. NOW, stop the processor. Since all workers are done, nothing more will be sent to it.
+	s.logger.Info().Msg("Stopping message processor...")
+	if s.processor != nil {
+		s.processor.Stop()
+	}
+	s.logger.Info().Msg("Message processor stopped.")
+
+	// 4. Finally, confirm the consumer is fully stopped.
 	s.logger.Info().Msg("Waiting for message consumer to stop...")
 	if s.consumer != nil {
 		<-s.consumer.Done()
 	}
 	s.logger.Info().Msg("Message consumer stopped.")
-
-	// 3. Wait for all processing workers to finish their current tasks.
-	s.logger.Info().Msg("Waiting for processing workers to complete...")
-	s.wg.Wait()
-	s.logger.Info().Msg("All processing workers completed.")
-
-	// 4. Stop the processor. This will flush any remaining buffered items.
-	if s.processor != nil {
-		s.processor.Stop() // Processor does not need context for Stop
-	}
 
 	s.logger.Info().Msg("Generic ProcessingService stopped gracefully.")
 }

@@ -212,7 +212,7 @@ func (p *GooglePubsubProducer[T]) Input() chan<- *types.BatchedMessage[T] {
 
 // Start initiates the producer's internal publishing loop.
 // It accepts a context to manage its lifecycle.
-func (p *GooglePubsubProducer[T]) Start(ctx context.Context) {
+func (p *GooglePubsubProducer[T]) Start(shutdownCtx context.Context) {
 	p.logger.Info().Msg("Starting Pub/Sub producer...")
 	p.wg.Add(1)
 	go func() {
@@ -249,7 +249,7 @@ func (p *GooglePubsubProducer[T]) Start(ctx context.Context) {
 				// Asynchronously wait for the publish result. This is where Ack/Nack are associated with the original message.
 				// This goroutine is detached from the main producer loop and its context.
 				go func(originalMsg types.ConsumedMessage, publishResult *pubsub.PublishResult) {
-					publishCtx, publishCancel := context.WithTimeout(context.Background(), 10*time.Second) // Use new context for Get
+					publishCtx, publishCancel := context.WithTimeout(shutdownCtx, 10*time.Second) // Use new context for Get
 					defer publishCancel()
 
 					msgID, err := publishResult.Get(publishCtx)
@@ -271,7 +271,7 @@ func (p *GooglePubsubProducer[T]) Start(ctx context.Context) {
 					}
 				}(batchedMsg.OriginalMessage, res) // Pass original message and result to goroutine
 
-			case <-ctx.Done(): // Use the passed context for shutdown signal
+			case <-shutdownCtx.Done(): // Use the passed context for shutdown signal
 				p.logger.Info().Msg("Producer received shutdown signal, stopping publishing loop.")
 				return
 			}

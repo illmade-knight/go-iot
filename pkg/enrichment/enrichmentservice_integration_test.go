@@ -89,7 +89,7 @@ func TestEnrichmentService_Integration(t *testing.T) {
 	require.NoError(t, err)
 
 	// --- Run Test ---
-	err = processingService.Start()
+	err = processingService.Start(context.Background())
 	require.NoError(t, err)
 	defer processingService.Stop()
 

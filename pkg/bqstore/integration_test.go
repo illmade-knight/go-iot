@@ -105,7 +105,7 @@ func TestBigQueryService_Integration_FullFlow(t *testing.T) {
 
 	// --- Test Execution (Unchanged) ---
 	go func() {
-		err := processingService.Start()
+		err := processingService.Start(ctx)
 		assert.NoError(t, err, "ProcessingService.Start() should not return an error on graceful shutdown")
 	}()
 

@@ -35,15 +35,15 @@ func NewGoogleSimplePublisher(client *pubsub.Client, topicID string, logger zero
 }
 
 // Publish sends a single message to Pub/Sub and does not wait for the result.
-func (p *GoogleSimplePublisher) Publish(ctx context.Context, payload []byte, attributes map[string]string) error {
-	result := p.topic.Publish(ctx, &pubsub.Message{
+func (p *GoogleSimplePublisher) Publish(publishContext context.Context, payload []byte, attributes map[string]string) error {
+	result := p.topic.Publish(publishContext, &pubsub.Message{
 		Data:       payload,
 		Attributes: attributes,
 	})
 
 	// Asynchronously check the result to log any publish errors without blocking the caller.
 	go func() {
-		msgID, err := result.Get(context.Background())
+		msgID, err := result.Get(publishContext)
 		if err != nil {
 			p.logger.Error().Err(err).Msg("Failed to publish dead-letter message")
 			return

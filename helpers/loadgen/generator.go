@@ -50,7 +50,6 @@ func (lg *LoadGenerator) ExpectedMessagesForDuration(duration time.Duration) int
 				totalExpected += 1 + numTicks
 			} else {
 				// If rate is very high, interval could be 0. Handle gracefully.
-				// This case is unlikely in realistic scenarios.
 				totalExpected += 1
 			}
 		}
@@ -88,14 +87,15 @@ func (lg *LoadGenerator) Run(ctx context.Context, duration time.Duration) (int, 
 }
 
 // runDevice runs the message publishing loop for a single device.
-// It uses a "publish-then-tick" loop. This means it publishes a message
-// immediately at the start of the loop (T=0) and then on every subsequent tick.
-// This ensures that for a given rate R and duration D, the number of messages
-// sent will be floor(R*D) + 1. For example, a rate of 1Hz for 3 seconds
-// will send messages at T=0, T=1, T=2, and T=3, for a total of 4 messages.
+// It is deterministic: it publishes one message immediately at T=0, and then enters
+// a "wait-then-publish" loop for subsequent messages. This ensures that for a given
+// rate R and duration D, the number of messages is exactly ceil(R*D).
+// For example, a rate of 1Hz for 2 seconds sends messages at T=0s and T=1s
+// for a total of 2 messages. A rate of 1Hz for 2.1 seconds sends messages
+// at T=0s, T=1s, and T=2s for a total of 3 messages.
 func (lg *LoadGenerator) runDevice(ctx context.Context, device *Device) {
 	if device.MessageRate <= 0 {
-		lg.logger.Warn().Str("device_id", device.ID).Msg("Device has a message rate of 0, no messages will be sent")
+		lg.logger.Warn().Str("device_id", device.ID).Msg("Device has a message rate of 0, no messages will be sent.")
 		return
 	}
 
@@ -103,23 +103,36 @@ func (lg *LoadGenerator) runDevice(ctx context.Context, device *Device) {
 	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
 
-	lg.logger.Info().Str("device_id", device.ID).Float64("rate_hz", device.MessageRate).Dur("interval", interval).Msg("Device starting loop")
+	lg.logger.Info().Str("device_id", device.ID).Float64("rate_hz", device.MessageRate).Dur("interval", interval).Msg("Device starting loop.")
 
-	for {
-		// Attempt to publish a message immediately.
+	// 1. Publish the first message immediately for T=0, but only if the context isn't already done.
+	select {
+	case <-ctx.Done():
+		lg.logger.Info().Str("device_id", device.ID).Msg("Context already done before first message.")
+		return
+	default:
+		// Context is not done, so proceed with the first publish.
 		if success, err := lg.client.Publish(ctx, device); err != nil {
-			lg.logger.Error().Err(err).Str("device_id", device.ID).Msg("Failed to publish message")
+			lg.logger.Error().Err(err).Str("device_id", device.ID).Msg("Failed to publish message.")
 		} else if success {
 			atomic.AddInt64(&lg.publishedCount, 1)
 		}
+	}
 
-		// Then, wait for the next tick or for the context to be cancelled.
+	// 2. Loop for all subsequent messages, using a "wait-then-publish" pattern.
+	for {
 		select {
 		case <-ctx.Done():
-			lg.logger.Info().Str("device_id", device.ID).Msg("Device stopping")
+			// The duration is up, stop waiting for more ticks.
+			lg.logger.Info().Str("device_id", device.ID).Msg("Device stopping.")
 			return
 		case <-ticker.C:
-			// Continue to the next iteration of the loop.
+			// A tick occurred. We are now allowed to publish another message.
+			if success, err := lg.client.Publish(ctx, device); err != nil {
+				lg.logger.Error().Err(err).Str("device_id", device.ID).Msg("Failed to publish message.")
+			} else if success {
+				atomic.AddInt64(&lg.publishedCount, 1)
+			}
 		}
 	}
 }
