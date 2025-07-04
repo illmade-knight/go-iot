@@ -51,6 +51,7 @@ type EnvironmentSpec struct {
 // ServiceSpec defines a microservice's identity within the system.
 type ServiceSpec struct {
 	Name           string                 `yaml:"name"`
+	Description    string                 `yaml:"description,omitempty"`
 	ServiceAccount string                 `yaml:"service_account"`
 	SourcePath     string                 `yaml:"source_path"`
 	MinInstances   int                    `yaml:"min_instances"`
@@ -80,11 +81,22 @@ type ResourcesSpec struct {
 	GCSBuckets       []GCSBucket          `yaml:"gcs_buckets"`
 }
 
+// IAM defines how resources are accessed
+type IAM struct {
+	Name string `yaml:"name"`
+	Role string `yaml:"role"` // e.g., "roles/pubsub.publisher", "roles/bigquery.dataEditor"
+}
+
+type IAMAccessPolicy struct {
+	IAMAccess []IAM `yaml:"iam_access,omitempty"`
+}
+
 // TopicConfig defines the configuration for a Pub/Sub topic.
 type TopicConfig struct {
 	Name            string            `yaml:"name"`
 	Labels          map[string]string `yaml:"labels,omitempty"`
 	ProducerService string            `yaml:"producer_service,omitempty"`
+	IAMAccessPolicy IAMAccessPolicy   `yaml:"iam_access_policy,omitempty"`
 }
 
 // SubscriptionConfig defines the configuration for a Pub/Sub subscription.
@@ -96,6 +108,7 @@ type SubscriptionConfig struct {
 	RetryPolicy        *RetryPolicySpec  `yaml:"retry_policy,omitempty"`
 	Labels             map[string]string `yaml:"labels,omitempty"`
 	ConsumerService    string            `yaml:"consumer_service,omitempty"`
+	IAMAccessPolicy    IAMAccessPolicy   `yaml:"iam_access_policy,omitempty"`
 }
 
 // RetryPolicySpec should be updated to use the new Duration type.
@@ -106,23 +119,24 @@ type RetryPolicySpec struct {
 
 // BigQueryDataset defines the configuration for a BigQuery dataset.
 type BigQueryDataset struct {
-	Name        string            `yaml:"name"`
-	Location    string            `yaml:"location,omitempty"`
-	Description string            `yaml:"description,omitempty"`
-	Labels      map[string]string `yaml:"labels,omitempty"`
+	Name            string            `yaml:"name"`
+	Location        string            `yaml:"location,omitempty"`
+	Description     string            `yaml:"description,omitempty"`
+	Labels          map[string]string `yaml:"labels,omitempty"`
+	IAMAccessPolicy IAMAccessPolicy   `yaml:"iam_access_policy,omitempty"`
 }
 
 // BigQueryTable defines the configuration for a BigQuery table.
 type BigQueryTable struct {
-	Name                   string   `yaml:"name"`
-	Dataset                string   `yaml:"dataset"`
-	Description            string   `yaml:"description,omitempty"`
-	SchemaSourceType       string   `yaml:"schema_source_type"`
-	SchemaSourceIdentifier string   `yaml:"schema_source_identifier"`
-	TimePartitioningField  string   `yaml:"time_partitioning_field,omitempty"`
-	TimePartitioningType   string   `yaml:"time_partitioning_type,omitempty"`
-	ClusteringFields       []string `yaml:"clustering_fields,omitempty"`
-	AccessingServices      []string `yaml:"accessing_services,omitempty"`
+	Name                   string          `yaml:"name"`
+	Dataset                string          `yaml:"dataset"`
+	Description            string          `yaml:"description,omitempty"`
+	SchemaSourceType       string          `yaml:"schema_source_type"`
+	SchemaSourceIdentifier string          `yaml:"schema_source_identifier"`
+	TimePartitioningField  string          `yaml:"time_partitioning_field,omitempty"`
+	TimePartitioningType   string          `yaml:"time_partitioning_type,omitempty"`
+	ClusteringFields       []string        `yaml:"clustering_fields,omitempty"`
+	IAMAccessPolicy        IAMAccessPolicy `yaml:"iam_access_policy,omitempty"`
 }
 
 // GCSBucket defines the configuration for a GCS bucket.
@@ -133,7 +147,7 @@ type GCSBucket struct {
 	VersioningEnabled bool                `yaml:"versioning_enabled,omitempty"`
 	LifecycleRules    []LifecycleRuleSpec `yaml:"lifecycle_rules,omitempty"`
 	Labels            map[string]string   `yaml:"labels,omitempty"`
-	AccessingServices []string            `yaml:"accessing_services,omitempty"`
+	IAMAccessPolicy   IAMAccessPolicy     `yaml:"iam_access_policy,omitempty"`
 }
 
 // LifecycleRuleSpec defines a lifecycle rule for a GCS bucket.

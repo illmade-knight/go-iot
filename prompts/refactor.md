@@ -20,4 +20,6 @@ Here is a template you can use at the start of any new chat session to ensure th
 2. **Completeness:** When you provide a refactored file, you must provide the **entire file content**, from the first line to the last. Do not use snippets, skeletons, or placeholders. The code must be complete and syntactically correct.
 3. **Precision:** When I ask for a specific change, apply only that change. Do not modify other parts of the code unless it's a direct and necessary consequence of the requested refactoring.
 
+
+
 Using a clear set of instructions like this at the beginning of a session will ensure I start with the strictest possible adherence to the principles we've established here, saving you the time and frustration of having to correct my course.

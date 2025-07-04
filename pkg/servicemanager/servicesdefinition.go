@@ -2,6 +2,7 @@ package servicemanager
 
 import (
 	"fmt"
+	"github.com/rs/zerolog"
 	"os"
 
 	"gopkg.in/yaml.v3"
@@ -152,4 +153,78 @@ func (sd *InMemoryServicesDefinition) GetProjectID(environment string) (string, 
 		return sd.parsedConfig.DefaultProjectID, nil
 	}
 	return "", fmt.Errorf("project ID not found for environment '%s' and no default is set", environment)
+}
+
+// MapServiceDefinitions is a concrete implementation of ServicesDefinition
+// that loads definitions from a YAML file and provides map-based lookup.
+type MapServiceDefinitions struct {
+	config     *TopLevelConfig
+	serviceMap map[string]*ServiceSpec // Map for quick lookup of ServiceSpec by name
+	logger     zerolog.Logger
+}
+
+// NewMapServiceDefinitions loads the TopLevelConfig from the specified path
+// and initializes the internal service map for efficient lookups.
+// This assumes that your `TopLevelConfig` has a way to enumerate or define
+// the `ServiceSpec` instances. If `ServiceSpec` is directly defined under
+// `services` in your YAML, you might need to add a `Services map[string]ServiceSpec`
+// field to your `TopLevelConfig` in `types.go` for this to work effectively.
+// For now, it will only populate the service map for services explicitly named
+// in the `ServiceNames` list of the embedded `ResourceGroup` in `TopLevelConfig`.
+// If `ServiceSpec` is *not* in the YAML, this `GetService` would need to
+// synthesize it based on the name.
+func NewMapServiceDefinitions(configPath string, logger zerolog.Logger) (*MapServiceDefinitions, error) {
+	data, err := os.ReadFile(configPath)
+	if err != nil {
+		return nil, fmt.Errorf("failed to read services definition file %s: %w", configPath, err)
+	}
+
+	var cfg TopLevelConfig
+	if err := yaml.Unmarshal(data, &cfg); err != nil {
+		return nil, fmt.Errorf("failed to unmarshal services definition from %s: %w", configPath, err)
+	}
+
+	serviceMap := make(map[string]*ServiceSpec)
+	// IMPORTANT ASSUMPTION: This currently assumes that all service names listed
+	// in cfg.ServiceNames (from the embedded ResourceGroup) can be
+	// mapped to a ServiceSpec. If your YAML contains explicit ServiceSpec definitions
+	// in a separate top-level map (e.g., `services: { service-name: { ... } }`),
+	// you would populate `serviceMap` from that map.
+	// For now, we'll create a minimal ServiceSpec just containing the name.
+	for _, serviceName := range cfg.ServiceNames {
+		serviceMap[serviceName] = &ServiceSpec{Name: serviceName}
+	}
+
+	return &MapServiceDefinitions{
+		config:     &cfg,
+		serviceMap: serviceMap,
+		logger:     logger,
+	}, nil
+}
+
+// GetService retrieves a ServiceSpec by its name.
+// This implementation assumes the service names in the TopLevelConfig.ServiceNames
+// correspond to the logical services, and for now, it synthesizes a minimal
+// ServiceSpec if a named service exists in the TopLevelConfig's list.
+func (m *MapServiceDefinitions) GetService(name string) (*ServiceSpec, error) {
+	svc, found := m.serviceMap[name]
+	if !found {
+		// Check if it's in any dataflow's service names if not in top-level
+		for _, dataflow := range m.config.Dataflows {
+			for _, dataflowSvcName := range dataflow.ServiceNames {
+				if dataflowSvcName == name {
+					// Found in a dataflow, synthesize a minimal spec
+					m.serviceMap[name] = &ServiceSpec{Name: name} // Cache it
+					return m.serviceMap[name], nil
+				}
+			}
+		}
+		return nil, fmt.Errorf("service '%s' not found in definitions", name)
+	}
+	return svc, nil
+}
+
+// GetTopLevelConfig returns the complete TopLevelConfig loaded.
+func (m *MapServiceDefinitions) GetTopLevelConfig() *TopLevelConfig {
+	return m.config
 }
