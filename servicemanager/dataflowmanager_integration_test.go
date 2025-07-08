@@ -3,13 +3,14 @@
 package servicemanager_test
 
 import (
+	"cloud.google.com/go/bigquery"
 	"cloud.google.com/go/pubsub"
 	"cloud.google.com/go/storage"
 	"context"
 	"github.com/google/uuid"
 	"github.com/illmade-knight/go-iot/helpers/emulators"
-	"github.com/illmade-knight/go-iot/pkg/servicemanager"
 	"github.com/illmade-knight/go-iot/pkg/types"
+	servicemanager "github.com/illmade-knight/go-iot/servicemanager"
 	"github.com/rs/zerolog"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -35,16 +36,31 @@ func TestDataflowManager_Integration_Emulators(t *testing.T) {
 	// Define the specific ResourceGroup for this DataflowManager to handle.
 	dataflowSpec := &servicemanager.ResourceGroup{
 		Name: "isolated-dataflow-" + runID,
-		Resources: servicemanager.ResourcesSpec{
-			GCSBuckets: []servicemanager.GCSBucket{{Name: bucketName, VersioningEnabled: false}},
-			Topics:     []servicemanager.TopicConfig{{Name: topicName}},
-			Subscriptions: []servicemanager.SubscriptionConfig{
-				{Name: subName, Topic: topicName, AckDeadlineSeconds: 123},
+		Resources: servicemanager.CloudResourcesSpec{
+			GCSBuckets: []servicemanager.GCSBucket{
+				{
+					CloudResource:     servicemanager.CloudResource{Name: bucketName},
+					VersioningEnabled: false},
 			},
-			BigQueryDatasets: []servicemanager.BigQueryDataset{{Name: datasetName}},
+			Topics: []servicemanager.TopicConfig{
+				{
+					CloudResource: servicemanager.CloudResource{Name: topicName},
+				},
+			},
+			Subscriptions: []servicemanager.SubscriptionConfig{
+				{
+					CloudResource: servicemanager.CloudResource{Name: subName},
+					Topic:         topicName, AckDeadlineSeconds: 123,
+				},
+			},
+			BigQueryDatasets: []servicemanager.BigQueryDataset{
+				{
+					CloudResource: servicemanager.CloudResource{Name: datasetName},
+				},
+			},
 			BigQueryTables: []servicemanager.BigQueryTable{
 				{
-					Name:                   tableName,
+					CloudResource:          servicemanager.CloudResource{Name: tableName},
 					Dataset:                datasetName,
 					SchemaSourceType:       "go_struct",
 					SchemaSourceIdentifier: "github.com/illmade-knight/go-iot/pkg/types.GardenMonitorReadings",
@@ -65,7 +81,8 @@ func TestDataflowManager_Integration_Emulators(t *testing.T) {
 	defer psClient.Close()
 
 	bqConnection := emulators.SetupBigQueryEmulator(t, ctx, emulators.GetDefaultBigQueryConfig(projectID, nil, nil))
-	bqClient := newEmulatorBQClient(ctx, t, projectID, bqConnection.ClientOptions)
+	bqClient, err := bigquery.NewClient(ctx, projectID, bqConnection.ClientOptions...)
+	require.NoError(t, err)
 	defer bqClient.Close()
 
 	// --- 2. Create Real Managers with Emulator-Connected Clients ---
@@ -92,10 +109,12 @@ func TestDataflowManager_Integration_Emulators(t *testing.T) {
 		storageManager,
 		bigqueryManager,
 		dataflowSpec,
-		projectID,
-		"us-central1",
-		nil,
-		"integration",
+		servicemanager.Environment{
+			Name:               "integration",
+			ProjectID:          projectID,
+			Location:           "us-central1",
+			TeardownProtection: false,
+		},
 		logger,
 	)
 	require.NoError(t, err)
@@ -103,7 +122,12 @@ func TestDataflowManager_Integration_Emulators(t *testing.T) {
 	// Teardown is deferred to ensure resources are cleaned up even if tests fail.
 	defer func() {
 		t.Log("--- Starting deferred teardown for DataflowManager test ---")
-		err := dfm.Teardown(ctx, false)
+		err := dfm.Teardown(ctx, servicemanager.Environment{
+			Name:               "integration",
+			ProjectID:          projectID,
+			Location:           "us-central1",
+			TeardownProtection: false,
+		})
 		assert.NoError(t, err, "Deferred teardown should not fail")
 	}()
 
@@ -118,7 +142,8 @@ func TestDataflowManager_Integration_Emulators(t *testing.T) {
 		psVerifyClient, err := pubsub.NewClient(ctx, projectID, psConnection.ClientOptions...)
 		require.NoError(t, err)
 		defer psVerifyClient.Close()
-		bqVerifyClient := newEmulatorBQClient(ctx, t, projectID, bqConnection.ClientOptions)
+		bqVerifyClient, err := bigquery.NewClient(ctx, projectID, bqConnection.ClientOptions...)
+		require.NoError(t, err)
 		defer bqVerifyClient.Close()
 
 		// Verify GCS Bucket
@@ -141,7 +166,12 @@ func TestDataflowManager_Integration_Emulators(t *testing.T) {
 	// --- 5. Run Teardown and Verify ---
 	t.Run("DataflowManager_Teardown_And_Verify_With_Emulators", func(t *testing.T) {
 		// Teardown the resources created in the previous sub-test.
-		err = dfm.Teardown(ctx, false)
+		err = dfm.Teardown(ctx, servicemanager.Environment{
+			Name:               "integration",
+			ProjectID:          projectID,
+			Location:           "us-central1",
+			TeardownProtection: false,
+		})
 		require.NoError(t, err)
 
 		// Create direct clients for verification
@@ -150,7 +180,8 @@ func TestDataflowManager_Integration_Emulators(t *testing.T) {
 		psVerifyClient, err := pubsub.NewClient(ctx, projectID, psConnection.ClientOptions...)
 		require.NoError(t, err)
 		defer psVerifyClient.Close()
-		bqVerifyClient := newEmulatorBQClient(ctx, t, projectID, bqConnection.ClientOptions)
+		bqVerifyClient, err := bigquery.NewClient(ctx, projectID, bqConnection.ClientOptions...)
+		require.NoError(t, err)
 		defer bqVerifyClient.Close()
 
 		// Verify all resources are gone

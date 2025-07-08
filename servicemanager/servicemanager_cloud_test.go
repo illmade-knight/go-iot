@@ -5,6 +5,7 @@ package servicemanager_test
 import (
 	"cloud.google.com/go/bigquery"
 	"context"
+	servicemanager2 "github.com/illmade-knight/go-iot/servicemanager"
 	"os"
 	"strings"
 	"testing"
@@ -14,7 +15,6 @@ import (
 	"cloud.google.com/go/storage"
 	"github.com/google/uuid"
 
-	"github.com/illmade-knight/go-iot/pkg/servicemanager"
 	"github.com/illmade-knight/go-iot/pkg/types"
 	"github.com/rs/zerolog"
 	"github.com/stretchr/testify/assert"
@@ -42,25 +42,26 @@ func TestServiceManager_Integration_CloudProject(t *testing.T) {
 	tableName := "sm_cit_table_" + runID
 
 	// Define the configuration using the new dataflow-centric structure
-	cfg := &servicemanager.TopLevelConfig{
-		DefaultProjectID: cloudProjectID,
-		Environments:     map[string]servicemanager.EnvironmentSpec{"cloudtest": {ProjectID: cloudProjectID}},
-		Dataflows: []servicemanager.ResourceGroup{
-			{
+	cfg := &servicemanager2.MicroserviceArchitecture{
+		Environment: servicemanager2.Environment{
+			ProjectID: cloudProjectID,
+		},
+		Dataflows: map[string]servicemanager2.ResourceGroup{
+			dataflowName: {
 				Name: dataflowName,
-				Lifecycle: &servicemanager.LifecyclePolicy{
-					Strategy: servicemanager.LifecycleStrategyEphemeral,
+				Lifecycle: &servicemanager2.LifecyclePolicy{
+					Strategy: servicemanager2.LifecycleStrategyEphemeral,
 				},
-				Resources: servicemanager.ResourcesSpec{
-					GCSBuckets: []servicemanager.GCSBucket{{Name: bucketName}},
-					Topics:     []servicemanager.TopicConfig{{Name: topicName}},
-					Subscriptions: []servicemanager.SubscriptionConfig{
-						{Name: subName, Topic: topicName, AckDeadlineSeconds: 25},
+				Resources: servicemanager2.CloudResourcesSpec{
+					GCSBuckets: []servicemanager2.GCSBucket{{CloudResource: servicemanager2.CloudResource{Name: bucketName}}},
+					Topics:     []servicemanager2.TopicConfig{{CloudResource: servicemanager2.CloudResource{Name: topicName}}},
+					Subscriptions: []servicemanager2.SubscriptionConfig{
+						{CloudResource: servicemanager2.CloudResource{Name: subName}, Topic: topicName, AckDeadlineSeconds: 25},
 					},
-					BigQueryDatasets: []servicemanager.BigQueryDataset{{Name: datasetName}},
-					BigQueryTables: []servicemanager.BigQueryTable{
+					BigQueryDatasets: []servicemanager2.BigQueryDataset{{CloudResource: servicemanager2.CloudResource{Name: datasetName}}},
+					BigQueryTables: []servicemanager2.BigQueryTable{
 						{
-							Name:                   tableName,
+							CloudResource:          servicemanager2.CloudResource{Name: tableName},
 							Dataset:                datasetName,
 							SchemaSourceType:       "go_struct",
 							SchemaSourceIdentifier: "github.com/illmade-knight/go-iot/pkg/types.GardenMonitorReadings",
@@ -71,7 +72,7 @@ func TestServiceManager_Integration_CloudProject(t *testing.T) {
 		},
 	}
 
-	servicesDef, err := servicemanager.NewInMemoryServicesDefinition(cfg)
+	servicesDef, err := servicemanager2.NewInMemoryServicesDefinition(cfg)
 	require.NoError(t, err)
 
 	logger := zerolog.New(zerolog.ConsoleWriter{Out: os.Stderr, TimeFormat: time.RFC3339})
@@ -88,23 +89,26 @@ func TestServiceManager_Integration_CloudProject(t *testing.T) {
 	bqClient, err := bigquery.NewClient(ctx, cloudProjectID)
 	defer bqClient.Close()
 
-	// --- 2. Create adapters and ServiceManager ---
-	gcsAdapter := servicemanager.NewGCSClientAdapter(realGCSClient)
-	psAdapter := servicemanager.MessagingClientFromPubsubClient(realPSClient)
-	bqAdapter := servicemanager.NewBigQueryClientAdapter(bqClient)
+	// --- 2. Create adapters and ServiceManagerResources ---
+	gcsAdapter := servicemanager2.NewGCSClientAdapter(realGCSClient)
+	psAdapter := servicemanager2.MessagingClientFromPubsubClient(realPSClient)
+	bqAdapter := servicemanager2.NewBigQueryClientAdapter(bqClient)
 
 	schemaRegistry := map[string]interface{}{
 		"github.com/illmade-knight/go-iot/pkg/types.GardenMonitorReadings": types.GardenMonitorReadings{},
 	}
 
-	manager, err := servicemanager.NewServiceManagerFromClients(psAdapter, gcsAdapter, bqAdapter, servicesDef, schemaRegistry, logger)
+	architecture, err := servicesDef.GetMicroserviceArchitecture()
+	require.NoError(t, err)
+
+	manager, err := servicemanager2.NewServiceManagerFromClients(psAdapter, gcsAdapter, bqAdapter, architecture, schemaRegistry, logger)
 	require.NoError(t, err)
 
 	// --- Teardown is deferred to ensure resources are cleaned up even if tests fail ---
 	defer func() {
 		t.Log("--- Starting deferred teardown ---")
 		// Use the new TeardownAll signature
-		err := manager.TeardownAll(ctx, "cloudtest")
+		err := manager.TeardownAll(ctx)
 		assert.NoError(t, err, "Deferred teardown should not fail")
 
 		// Verify GCS Bucket is gone

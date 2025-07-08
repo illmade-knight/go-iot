@@ -21,16 +21,20 @@ const (
 
 func fromGCPTopicConfig(t *pubsub.TopicConfig) *TopicConfig {
 	return &TopicConfig{
-		Name:   t.ID(),
-		Labels: t.Labels,
+		CloudResource: CloudResource{
+			Name:   t.ID(),
+			Labels: t.Labels,
+		},
 	}
 }
 
 func fromGCPSubscriptionConfig(s *pubsub.SubscriptionConfig) *SubscriptionConfig {
 	spec := &SubscriptionConfig{
-		Name:               s.ID(),
+		CloudResource: CloudResource{
+			Name:   s.ID(),
+			Labels: s.Labels,
+		},
 		Topic:              s.Topic.ID(),
-		Labels:             s.Labels,
 		AckDeadlineSeconds: int(s.AckDeadline.Seconds()),
 		MessageRetention:   Duration(s.RetentionDuration),
 	}
@@ -180,7 +184,7 @@ func (a *gcpMessagingClientAdapter) CreateSubscription(ctx context.Context, subS
 func (a *gcpMessagingClientAdapter) Close() error { return a.client.Close() }
 
 // Validate checks the resource configuration against Google Pub/Sub specific rules.
-func (a *gcpMessagingClientAdapter) Validate(resources ResourcesSpec) error {
+func (a *gcpMessagingClientAdapter) Validate(resources CloudResourcesSpec) error {
 	for _, sub := range resources.Subscriptions {
 		// If AckDeadlineSeconds is set, it must be within the allowed range.
 		if sub.AckDeadlineSeconds != 0 {

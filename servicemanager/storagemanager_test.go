@@ -7,11 +7,13 @@ import (
 	"testing"
 
 	"cloud.google.com/go/iam"
-	"github.com/illmade-knight/go-iot/pkg/servicemanager"
 	"github.com/rs/zerolog"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/require"
+
+	// Correctly import servicemanager
+	"github.com/illmade-knight/go-iot/servicemanager"
 )
 
 // --- Mocks for Storage Interfaces ---
@@ -80,10 +82,11 @@ func (m *MockBucketHandle) IAM() *iam.Handle {
 }
 
 // --- Test Helper ---
-func getTestStorageResources() servicemanager.ResourcesSpec {
-	return servicemanager.ResourcesSpec{
-		GCSBuckets: []servicemanager.GCSBucket{{Name: "test-bucket"}},
-	}
+func getTestStorageResources() servicemanager.CloudResourcesSpec {
+	return servicemanager.CloudResourcesSpec{
+		GCSBuckets: []servicemanager.GCSBucket{{
+			CloudResource: servicemanager.CloudResource{Name: "test-bucket"}},
+		}}
 }
 
 // --- Test Cases for StorageManager ---
@@ -107,7 +110,13 @@ func TestStorageManager_Setup_CreateNewBucket(t *testing.T) {
 	mockBucketHandle.On("Create", ctx, projectID, mock.AnythingOfType("*servicemanager.BucketAttributes")).Return(nil)
 
 	// Act
-	err = manager.Setup(ctx, projectID, location, labels, resources)
+	err = manager.Setup(ctx, servicemanager.Environment{
+		Name:               "default",
+		ProjectID:          projectID,
+		Labels:             labels,
+		Location:           location,
+		TeardownProtection: false,
+	}, resources)
 
 	// Assert
 	assert.NoError(t, err)
@@ -123,9 +132,8 @@ func TestStorageManager_Teardown_Success(t *testing.T) {
 	require.NoError(t, err)
 
 	ctx := context.Background()
-	resources := servicemanager.ResourcesSpec{
-		GCSBuckets: []servicemanager.GCSBucket{{Name: "bucket-to-delete"}},
-	}
+	resources := servicemanager.CloudResourcesSpec{
+		GCSBuckets: []servicemanager.GCSBucket{{CloudResource: servicemanager.CloudResource{Name: "bucket-to-delete"}}}}
 
 	mockBucketHandle := new(MockBucketHandle)
 	mockClient.On("Bucket", "bucket-to-delete").Return(mockBucketHandle)
@@ -133,7 +141,7 @@ func TestStorageManager_Teardown_Success(t *testing.T) {
 	mockBucketHandle.On("Delete", ctx).Return(nil)
 
 	// Act
-	err = manager.Teardown(ctx, resources, false) // teardownProtection is false
+	err = manager.Teardown(ctx, resources) // teardownProtection is false
 
 	// Assert
 	assert.NoError(t, err)
@@ -141,6 +149,7 @@ func TestStorageManager_Teardown_Success(t *testing.T) {
 	mockBucketHandle.AssertExpectations(t)
 }
 
+// --- CORRECTED Test Case ---
 func TestStorageManager_Teardown_ProtectionEnabled(t *testing.T) {
 	// Arrange
 	mockClient := new(MockStorageClient)
@@ -149,18 +158,29 @@ func TestStorageManager_Teardown_ProtectionEnabled(t *testing.T) {
 	require.NoError(t, err)
 
 	ctx := context.Background()
-	resources := getTestStorageResources()
+	// CORRECT: Explicitly set TeardownProtection to true for this test case
+	resources := servicemanager.CloudResourcesSpec{
+		GCSBuckets: []servicemanager.GCSBucket{{
+			CloudResource: servicemanager.CloudResource{
+				Name:               "protected-bucket", // Use a distinct name for clarity
+				TeardownProtection: true,               // This is the key change
+			}},
+		}}
 
 	// Act
-	err = manager.Teardown(ctx, resources, true) // teardownProtection is true
+	err = manager.Teardown(ctx, resources)
 
 	// Assert
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "teardown protection enabled")
+	// Teardown should return no error when teardown protection is enabled for a bucket,
+	// as it simply logs a warning and skips the deletion.
+	assert.NoError(t, err)
+	// Assert that the client's Bucket method was NOT called, as it should be skipped
+	// due to teardown protection.
 	mockClient.AssertNotCalled(t, "Bucket", mock.Anything)
+	mockClient.AssertExpectations(t) // Ensure no unexpected calls occurred
 }
 
-// --- Test Cases for VerifyBuckets (No change needed as signature was already correct) ---
+// --- Test Cases for VerifyBuckets ---
 
 func TestStorageManager_VerifyBuckets(t *testing.T) {
 	ctx := context.Background()
@@ -171,7 +191,12 @@ func TestStorageManager_VerifyBuckets(t *testing.T) {
 
 	t.Run("All Buckets Exist and Match Config", func(t *testing.T) {
 		bucketsToVerify := []servicemanager.GCSBucket{
-			{Name: "bucket-exists", Location: "us-central1", StorageClass: "STANDARD", VersioningEnabled: true, Labels: map[string]string{"env": "dev"}},
+			{
+				CloudResource:     servicemanager.CloudResource{Name: "bucket-exists", Labels: map[string]string{"env": "dev"}},
+				Location:          "us-central1",
+				StorageClass:      "STANDARD",
+				VersioningEnabled: true,
+			},
 		}
 
 		mockBucket1 := new(MockBucketHandle)
@@ -188,7 +213,7 @@ func TestStorageManager_VerifyBuckets(t *testing.T) {
 
 	t.Run("Bucket Missing", func(t *testing.T) {
 		bucketsToVerify := []servicemanager.GCSBucket{
-			{Name: "missing-bucket"},
+			{CloudResource: servicemanager.CloudResource{Name: "missing-bucket"}},
 		}
 
 		mockBucket := new(MockBucketHandle)
@@ -204,7 +229,7 @@ func TestStorageManager_VerifyBuckets(t *testing.T) {
 
 	t.Run("Location Mismatch", func(t *testing.T) {
 		bucketsToVerify := []servicemanager.GCSBucket{
-			{Name: "location-mismatch-bucket", Location: "us-east1"},
+			{CloudResource: servicemanager.CloudResource{Name: "location-mismatch-bucket"}, Location: "us-east1"},
 		}
 
 		mockBucket := new(MockBucketHandle)

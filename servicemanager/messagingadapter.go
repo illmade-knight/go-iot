@@ -35,7 +35,7 @@ type MessagingClient interface {
 	CreateSubscription(ctx context.Context, subSpec SubscriptionConfig) (MessagingSubscription, error)
 	Close() error
 	// Validate checks if the resource configuration is valid for the specific implementation.
-	Validate(resources ResourcesSpec) error
+	Validate(resources CloudResourcesSpec) error
 	// Check if we need to be able to access this generally or only in specific adapters
 	//Config(ctx context.Context) (*SubscriptionConfig, error)
 }

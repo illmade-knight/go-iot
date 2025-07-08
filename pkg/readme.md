@@ -7,7 +7,7 @@ This is a monolithic lib for microservices
 As a microservice in our services-mvp matures we extract elements that
 we want to reuse.
 
-### [Service Manager](servicemanager)
+### [Service Manager](../servicemanager)
 
 We've moved the core service manager code here - 
 this enables easy local setup of gcloud resources prior to microservice deployment

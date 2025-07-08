@@ -43,8 +43,8 @@ func isBucketNotExist(err error) bool {
 }
 
 // Setup creates or updates storage buckets as defined in the provided resource specification.
-func (sm *StorageManager) Setup(ctx context.Context, projectID, defaultLocation string, defaultLabels map[string]string, resources ResourcesSpec) error {
-	sm.logger.Info().Str("project_id", projectID).Msg("Starting Storage Bucket setup")
+func (sm *StorageManager) Setup(ctx context.Context, environment Environment, resources CloudResourcesSpec) error {
+	sm.logger.Info().Str("project_id", environment.ProjectID).Msg("Starting Storage Bucket setup")
 
 	for _, bucketCfg := range resources.GCSBuckets {
 		if bucketCfg.Name == "" {
@@ -59,7 +59,7 @@ func (sm *StorageManager) Setup(ctx context.Context, projectID, defaultLocation 
 
 		// Combine default and bucket-specific labels
 		finalLabels := make(map[string]string)
-		for k, v := range defaultLabels {
+		for k, v := range environment.Labels {
 			finalLabels[k] = v
 		}
 		for k, v := range bucketCfg.Labels {
@@ -75,8 +75,8 @@ func (sm *StorageManager) Setup(ctx context.Context, projectID, defaultLocation 
 
 		if bucketCfg.Location != "" {
 			attrsToApply.Location = strings.ToUpper(bucketCfg.Location)
-		} else if defaultLocation != "" {
-			attrsToApply.Location = strings.ToUpper(defaultLocation)
+		} else if environment.Location != "" {
+			attrsToApply.Location = strings.ToUpper(environment.Location)
 		} else {
 			sm.logger.Warn().Str("bucket_name", bucketCfg.Name).Msg("Bucket location not specified, relying on provider defaults.")
 		}
@@ -86,14 +86,14 @@ func (sm *StorageManager) Setup(ctx context.Context, projectID, defaultLocation 
 			for _, ruleSpec := range bucketCfg.LifecycleRules {
 				attrsToApply.LifecycleRules = append(attrsToApply.LifecycleRules, LifecycleRule{
 					Action:    LifecycleAction{Type: ruleSpec.Action.Type},
-					Condition: LifecycleCondition{AgeInDays: ruleSpec.Condition.AgeDays},
+					Condition: LifecycleCondition{AgeInDays: ruleSpec.Condition.AgeInDays},
 				})
 			}
 		}
 
 		if isBucketNotExist(err) {
 			sm.logger.Info().Str("bucket_name", bucketCfg.Name).Str("location", attrsToApply.Location).Msg("Bucket not found, creating...")
-			if errCreate := bucketHandle.Create(ctx, projectID, &attrsToApply); errCreate != nil {
+			if errCreate := bucketHandle.Create(ctx, environment.ProjectID, &attrsToApply); errCreate != nil {
 				return fmt.Errorf("failed to create bucket '%s': %w", bucketCfg.Name, errCreate)
 			}
 			sm.logger.Info().Str("bucket_name", bucketCfg.Name).Msg("Bucket created successfully")
@@ -121,7 +121,7 @@ func (sm *StorageManager) Setup(ctx context.Context, projectID, defaultLocation 
 			}
 		}
 	}
-	sm.logger.Info().Str("project_id", projectID).Msg("Storage Bucket setup completed successfully")
+	sm.logger.Info().Str("project_id", environment.ProjectID).Msg("Storage Bucket setup completed successfully")
 	return nil
 }
 
@@ -174,15 +174,15 @@ func (sm *StorageManager) VerifyBuckets(ctx context.Context, bucketsToVerify []G
 }
 
 // Teardown deletes storage buckets as defined in the resource specification.
-func (sm *StorageManager) Teardown(ctx context.Context, resources ResourcesSpec, teardownProtection bool) error {
+func (sm *StorageManager) Teardown(ctx context.Context, resources CloudResourcesSpec) error {
 	sm.logger.Info().Msg("Starting Storage Bucket teardown")
-
-	if teardownProtection {
-		return fmt.Errorf("teardown protection enabled for this operation")
-	}
 
 	for i := len(resources.GCSBuckets) - 1; i >= 0; i-- {
 		bucketCfg := resources.GCSBuckets[i]
+		if bucketCfg.TeardownProtection {
+			sm.logger.Warn().Str("name", bucketCfg.Name).Msg("teardown protection in place")
+			continue
+		}
 		if bucketCfg.Name == "" {
 			sm.logger.Warn().Msg("Skipping bucket with empty name during teardown")
 			continue

@@ -4,6 +4,7 @@ package servicemanager_test
 
 import (
 	"context"
+	servicemanager "github.com/illmade-knight/go-iot/servicemanager"
 	"io"
 	"strings"
 	"testing"
@@ -11,7 +12,6 @@ import (
 
 	"cloud.google.com/go/pubsub"
 	"github.com/illmade-knight/go-iot/helpers/emulators"
-	"github.com/illmade-knight/go-iot/pkg/servicemanager"
 	"github.com/rs/zerolog"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -92,17 +92,30 @@ func (s *PubsubIntegrationTestSuite) Test_01_Manager_SetupAndTeardown() {
 	require.NoError(s.T(), err)
 
 	// Create the resources spec directly instead of from YAML
-	testResources := servicemanager.ResourcesSpec{
+	testResources := servicemanager.CloudResourcesSpec{
 		Topics: []servicemanager.TopicConfig{
-			{Name: testTopicName, Labels: map[string]string{"app": "test-runner"}},
+			{
+				CloudResource: servicemanager.CloudResource{Name: testTopicName, Labels: map[string]string{"app": "test-runner"}},
+			},
 		},
 		Subscriptions: []servicemanager.SubscriptionConfig{
-			{Name: testSubName, Topic: testTopicName, AckDeadlineSeconds: 42},
+			{
+				CloudResource:      servicemanager.CloudResource{Name: testSubName},
+				Topic:              testTopicName,
+				AckDeadlineSeconds: 42,
+			},
 		},
 	}
 
 	// --- Act: Setup ---
-	err = manager.Setup(s.ctx, testProjectID, testResources)
+	err = manager.Setup(
+		s.ctx,
+		servicemanager.Environment{
+			Name:               "integration",
+			ProjectID:          testProjectID,
+			TeardownProtection: false,
+		},
+		testResources)
 
 	// --- Assert: Setup ---
 	require.NoError(s.T(), err, "Manager.Setup should succeed")
@@ -127,8 +140,14 @@ func (s *PubsubIntegrationTestSuite) Test_01_Manager_SetupAndTeardown() {
 	assert.Equal(s.T(), 42*time.Second, subCfg.AckDeadline)
 
 	// --- Act: Teardown ---
-	err = manager.Teardown(s.ctx, testProjectID, testResources, false)
-
+	err = manager.Teardown(
+		s.ctx,
+		servicemanager.Environment{
+			Name:               "integration",
+			ProjectID:          testProjectID,
+			TeardownProtection: false,
+		},
+		testResources)
 	// --- Assert: Teardown ---
 	require.NoError(s.T(), err, "Manager.Teardown should succeed")
 
@@ -147,24 +166,36 @@ func (s *PubsubIntegrationTestSuite) Test_02_Manager_UpdateExistingResources() {
 	manager, err := servicemanager.NewMessagingManager(s.adapterClient, logger)
 	require.NoError(s.T(), err)
 
-	initialResources := servicemanager.ResourcesSpec{
-		Topics:        []servicemanager.TopicConfig{{Name: testTopicName, Labels: map[string]string{"version": "1"}}},
-		Subscriptions: []servicemanager.SubscriptionConfig{{Name: testSubName, Topic: testTopicName, AckDeadlineSeconds: 20}},
+	initialResources := servicemanager.CloudResourcesSpec{
+		Topics:        []servicemanager.TopicConfig{{CloudResource: servicemanager.CloudResource{Name: testTopicName, Labels: map[string]string{"version": "1"}}}},
+		Subscriptions: []servicemanager.SubscriptionConfig{{CloudResource: servicemanager.CloudResource{Name: testSubName}, Topic: testTopicName, AckDeadlineSeconds: 20}},
 	}
-	err = manager.Setup(s.ctx, testProjectID, initialResources)
+	err = manager.Setup(s.ctx,
+		servicemanager.Environment{
+			Name:               "integration",
+			ProjectID:          testProjectID,
+			TeardownProtection: false,
+		},
+		initialResources)
 	require.NoError(s.T(), err, "Initial setup failed")
 
 	// --- Act ---
-	updatedResources := servicemanager.ResourcesSpec{
-		Topics: []servicemanager.TopicConfig{{Name: testTopicName, Labels: map[string]string{"version": "2"}}},
+	updatedResources := servicemanager.CloudResourcesSpec{
+		Topics: []servicemanager.TopicConfig{{CloudResource: servicemanager.CloudResource{Name: testTopicName, Labels: map[string]string{"version": "2"}}}},
 		Subscriptions: []servicemanager.SubscriptionConfig{{
-			Name:               testSubName,
+			CloudResource:      servicemanager.CloudResource{Name: testSubName},
 			Topic:              testTopicName,
 			AckDeadlineSeconds: 55,
 			MessageRetention:   servicemanager.Duration(time.Minute * 20),
 		}},
 	}
-	err = manager.Setup(s.ctx, testProjectID, updatedResources)
+	err = manager.Setup(s.ctx,
+		servicemanager.Environment{
+			Name:               "integration",
+			ProjectID:          testProjectID,
+			TeardownProtection: false,
+		},
+		updatedResources)
 
 	// The Pub/Sub emulator does not support updating topic labels, which returns an error.
 	// We check for this specific known issue and allow the test to proceed.
@@ -191,8 +222,8 @@ func (s *PubsubIntegrationTestSuite) Test_02_Manager_UpdateExistingResources() {
 func (s *PubsubIntegrationTestSuite) Test_03_Adapter_CreateSubscriptionFailsForMissingTopic() {
 	// --- Arrange ---
 	subSpec := servicemanager.SubscriptionConfig{
-		Name:  testSubName,
-		Topic: "this-topic-does-not-exist",
+		CloudResource: servicemanager.CloudResource{Name: testSubName},
+		Topic:         "this-topic-does-not-exist",
 	}
 
 	// --- Act ---

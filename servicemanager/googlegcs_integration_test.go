@@ -4,13 +4,13 @@ package servicemanager_test
 
 import (
 	"context"
+	"github.com/illmade-knight/go-iot/servicemanager"
 	"io"
 	"testing"
 	"time"
 
 	"cloud.google.com/go/storage"
 	"github.com/illmade-knight/go-iot/helpers/emulators"
-	"github.com/illmade-knight/go-iot/pkg/servicemanager"
 	"github.com/rs/zerolog"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -34,19 +34,22 @@ func TestGoogleGCSAdapter_Integration_WithManager(t *testing.T) {
 	// --- Configuration ---
 	// Define the resources for the test directly as a struct, instead of parsing YAML.
 	testBucketName := "adapter-test-bucket"
-	testResources := servicemanager.ResourcesSpec{
+	testResources := servicemanager.CloudResourcesSpec{
 		GCSBuckets: []servicemanager.GCSBucket{
 			{
-				Name:              testBucketName,
-				StorageClass:      "STANDARD",
-				VersioningEnabled: false, // NOTE: GCS emulator (fs-storage) doesn't support versioning.
-				Labels:            map[string]string{"tested_by": "gcs-adapter"},
-				LifecycleRules: []servicemanager.LifecycleRuleSpec{
-					{
-						Action:    servicemanager.LifecycleActionSpec{Type: "Delete"},
-						Condition: servicemanager.LifecycleConditionSpec{AgeDays: 7},
+				CloudResource: servicemanager.CloudResource{
+					Name:   testBucketName,
+					Labels: map[string]string{"tested_by": "gcs-adapter"},
+					LifecycleRules: []servicemanager.LifecycleRule{
+						{
+							Action:    servicemanager.LifecycleAction{Type: "Delete"},
+							Condition: servicemanager.LifecycleCondition{AgeInDays: 7},
+						},
 					},
 				},
+				StorageClass:      "STANDARD",
+				VersioningEnabled: false, // NOTE: GCS emulator (fs-storage) doesn't support versioning.
+
 			},
 		},
 	}
@@ -66,7 +69,15 @@ func TestGoogleGCSAdapter_Integration_WithManager(t *testing.T) {
 	// --- Run Setup and Verify ---
 	t.Run("SetupResources_Through_Adapter", func(t *testing.T) {
 		// Call Setup with the new, refactored signature.
-		err = manager.Setup(ctx, gcsTestProjectID, defaultLocation, defaultLabels, testResources)
+		err = manager.Setup(ctx,
+			servicemanager.Environment{
+				Name:               "test",
+				ProjectID:          gcsTestProjectID,
+				Location:           defaultLocation,
+				Labels:             defaultLabels,
+				TeardownProtection: false,
+			},
+			testResources)
 		require.NoError(t, err, "StorageManager.Setup through adapter failed")
 
 		// Verify Bucket
@@ -83,7 +94,8 @@ func TestGoogleGCSAdapter_Integration_WithManager(t *testing.T) {
 	// --- Run Teardown and Verify ---
 	t.Run("TeardownResources_Through_Adapter", func(t *testing.T) {
 		// Call Teardown with the new, refactored signature.
-		err = manager.Teardown(ctx, testResources, false) // teardownProtection is false
+		err = manager.Teardown(ctx,
+			testResources) // teardownProtection is false
 		require.NoError(t, err, "StorageManager.Teardown through adapter failed")
 
 		// Verify Bucket is gone

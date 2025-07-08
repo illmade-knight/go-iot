@@ -3,10 +3,10 @@ package servicemanager_test
 import (
 	"context"
 	"errors"
+	servicemanager2 "github.com/illmade-knight/go-iot/servicemanager"
 	"io"
 	"testing"
 
-	"github.com/illmade-knight/go-iot/pkg/servicemanager"
 	"github.com/rs/zerolog"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -16,53 +16,70 @@ import (
 
 // getTestConfigWithBQ provides a more complex configuration for testing teardown scenarios,
 // including dataflows with different resource types to ensure managers are called correctly.
-func getTestConfigWithBQ() *servicemanager.TopLevelConfig {
-	return &servicemanager.TopLevelConfig{
-		DefaultProjectID: "test-project",
-		DefaultLocation:  "us-central1",
-		Environments: map[string]servicemanager.EnvironmentSpec{
+func getTestConfigWithBQ() *servicemanager2.MicroserviceArchitecture {
+	return &servicemanager2.MicroserviceArchitecture{
+		Environment: servicemanager2.Environment{
+			Name:      "default",
+			ProjectID: "ignore-project",
+			Location:  "eu-west1",
+		},
+		DeploymentEnvironments: map[string]servicemanager2.Environment{
 			"test": {
+				Name:               "test",
 				ProjectID:          "test-project",
 				TeardownProtection: false,
 			},
 		},
-		Dataflows: []servicemanager.ResourceGroup{
-			{
+		Dataflows: map[string]servicemanager2.ResourceGroup{
+			"ephemeral-topics": {
 				Name: "dataflow-ephemeral-topics",
-				Lifecycle: &servicemanager.LifecyclePolicy{
-					Strategy: servicemanager.LifecycleStrategyEphemeral,
+				Lifecycle: &servicemanager2.LifecyclePolicy{
+					Strategy: servicemanager2.LifecycleStrategyEphemeral,
 				},
-				Resources: servicemanager.ResourcesSpec{
-					Topics: []servicemanager.TopicConfig{{Name: "topic1"}},
+				Resources: servicemanager2.CloudResourcesSpec{
+					Topics: []servicemanager2.TopicConfig{{
+						CloudResource: servicemanager2.CloudResource{
+							Name:               "topic1",
+							TeardownProtection: false,
+						},
+					}},
 				},
 			},
-			{
+			"ephemeral-gcs": {
 				Name: "dataflow-ephemeral-gcs",
-				Lifecycle: &servicemanager.LifecyclePolicy{
-					Strategy: servicemanager.LifecycleStrategyEphemeral,
+				Lifecycle: &servicemanager2.LifecyclePolicy{
+					Strategy: servicemanager2.LifecycleStrategyEphemeral,
 				},
-				Resources: servicemanager.ResourcesSpec{
-					GCSBuckets: []servicemanager.GCSBucket{{Name: "bucket2"}},
+				Resources: servicemanager2.CloudResourcesSpec{
+					GCSBuckets: []servicemanager2.GCSBucket{{
+						CloudResource: servicemanager2.CloudResource{
+							Name:               "bucket2",
+							TeardownProtection: false,
+						}},
+					},
 				},
 			},
 			// ADDED a dataflow with BQ resources to specifically test BQ failure
-			{
+			"ephemeral-bq": {
 				Name: "dataflow-ephemeral-bq",
-				Lifecycle: &servicemanager.LifecyclePolicy{
-					Strategy: servicemanager.LifecycleStrategyEphemeral,
+				Lifecycle: &servicemanager2.LifecyclePolicy{
+					Strategy: servicemanager2.LifecycleStrategyEphemeral,
 				},
-				Resources: servicemanager.ResourcesSpec{
-					BigQueryDatasets: []servicemanager.BigQueryDataset{{Name: "dataset-to-fail"}},
-					BigQueryTables:   []servicemanager.BigQueryTable{{Name: "table-to-fail", Dataset: "dataset-to-fail"}},
+				Resources: servicemanager2.CloudResourcesSpec{
+					BigQueryDatasets: []servicemanager2.BigQueryDataset{{CloudResource: servicemanager2.CloudResource{Name: "dataset-to-fail"}}},
+					BigQueryTables:   []servicemanager2.BigQueryTable{{CloudResource: servicemanager2.CloudResource{Name: "table-to-fail"}, Dataset: "dataset-to-fail"}},
 				},
 			},
-			{
+			"permanent": {
 				Name: "dataflow-permanent",
-				Lifecycle: &servicemanager.LifecyclePolicy{
-					Strategy: servicemanager.LifecycleStrategyPermanent,
+				Lifecycle: &servicemanager2.LifecyclePolicy{
+					Strategy: servicemanager2.LifecycleStrategyPermanent,
 				},
-				Resources: servicemanager.ResourcesSpec{
-					BigQueryDatasets: []servicemanager.BigQueryDataset{{Name: "dataset-permanent"}},
+				Resources: servicemanager2.CloudResourcesSpec{
+					BigQueryDatasets: []servicemanager2.BigQueryDataset{{CloudResource: servicemanager2.CloudResource{
+						Name:               "dataset-permanent",
+						TeardownProtection: true,
+					}}},
 				},
 			},
 		},
@@ -76,7 +93,6 @@ func TestServiceManager_TeardownAll_Failure(t *testing.T) {
 	logger := zerolog.New(io.Discard)
 	// Use the new config with a dataflow that has BigQuery resources
 	testCfg := getTestConfigWithBQ()
-	env := "test"
 	projectID := "test-project"
 
 	t.Run("TeardownAll returns aggregated error on BigQuery failure", func(t *testing.T) {
@@ -84,7 +100,7 @@ func TestServiceManager_TeardownAll_Failure(t *testing.T) {
 		mockMsgClient := new(MockMessagingClient)
 		mockStoreClient := new(MockStorageClient)
 		mockBqClient := new(MockBQClient)
-		servicesDef, err := servicemanager.NewInMemoryServicesDefinition(testCfg)
+		servicesDef, err := servicemanager2.NewInMemoryServicesDefinition(testCfg)
 		require.NoError(t, err)
 
 		// The teardown loop runs in reverse. We expect it to process:
@@ -108,7 +124,7 @@ func TestServiceManager_TeardownAll_Failure(t *testing.T) {
 		// --- MOCK SETUP FOR dataflow-ephemeral-gcs (This will SUCCEED) ---
 		mockBucket2 := new(MockBucketHandle)
 		mockStoreClient.On("Bucket", "bucket2").Return(mockBucket2).Once()
-		mockBucket2.On("Attrs", ctx).Return(&servicemanager.BucketAttributes{}, nil).Once()
+		mockBucket2.On("Attrs", ctx).Return(&servicemanager2.BucketAttributes{}, nil).Once()
 		mockBucket2.On("Delete", ctx).Return(nil).Once()
 
 		// --- MOCK SETUP FOR dataflow-ephemeral-topics (This will SUCCEED) ---
@@ -119,10 +135,13 @@ func TestServiceManager_TeardownAll_Failure(t *testing.T) {
 		// We expect Project() to be called by the BQ Manager for EACH of the 3 ephemeral dataflows.
 		mockBqClient.On("Project").Return(projectID).Times(3)
 
-		// Act
-		sm, err := servicemanager.NewServiceManagerFromClients(mockMsgClient, mockStoreClient, mockBqClient, servicesDef, nil, logger)
+		architecture, err := servicesDef.GetMicroserviceArchitecture()
 		require.NoError(t, err)
-		err = sm.TeardownAll(ctx, env)
+
+		// Act
+		sm, err := servicemanager2.NewServiceManagerFromClients(mockMsgClient, mockStoreClient, mockBqClient, architecture, nil, logger)
+		require.NoError(t, err)
+		err = sm.TeardownAll(ctx)
 
 		// Assert
 		require.Error(t, err, "Expected an error to be returned from TeardownAll")

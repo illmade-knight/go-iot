@@ -6,23 +6,6 @@ import (
 	"google.golang.org/api/iterator" // For the Done error
 )
 
-// LifecycleAction represents an action in a lifecycle rule.
-type LifecycleAction struct {
-	Type string // e.g., "Delete"
-}
-
-// LifecycleCondition represents the conditions for a lifecycle rule.
-type LifecycleCondition struct {
-	AgeInDays int
-	// Other common conditions can be added here (e.g., CreatedBefore, Liveness).
-}
-
-// LifecycleRule combines an action and a condition.
-type LifecycleRule struct {
-	Action    LifecycleAction
-	Condition LifecycleCondition
-}
-
 // BucketAttributes represents the generic attributes of a storage bucket.
 // It's designed to be a common denominator for providers like GCS, S3, and Azure.
 type BucketAttributes struct {
