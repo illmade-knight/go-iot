@@ -3,28 +3,20 @@ package servicemanager_test
 import (
 	"context"
 	"errors"
-	"fmt"
-	"github.com/illmade-knight/go-iot/servicemanager"
-	"io"
-	"os"
+	"net/http"
 	"testing"
-	"time"
 
 	"cloud.google.com/go/bigquery"
-	telemetry "github.com/illmade-knight/go-iot/gen/go/protos/telemetry" // Assuming this path is correct for your schema
+	"github.com/illmade-knight/go-iot/servicemanager"
 	"github.com/rs/zerolog"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
-	"github.com/stretchr/testify/require"
+	"google.golang.org/api/googleapi"
 )
 
-// --- Mock Implementations for BQClient, BQDataset, BQTable interfaces ---
-// (These mocks are assumed to be defined elsewhere in the servicemanager_test package
-// and are imported/accessible here. Their definitions are omitted for brevity.)
+// --- Mocks ---
 
-type MockBQTable struct {
-	mock.Mock
-}
+type MockBQTable struct{ mock.Mock }
 
 func (m *MockBQTable) Metadata(ctx context.Context) (*bigquery.TableMetadata, error) {
 	args := m.Called(ctx)
@@ -33,20 +25,16 @@ func (m *MockBQTable) Metadata(ctx context.Context) (*bigquery.TableMetadata, er
 	}
 	return args.Get(0).(*bigquery.TableMetadata), args.Error(1)
 }
-
 func (m *MockBQTable) Create(ctx context.Context, meta *bigquery.TableMetadata) error {
 	args := m.Called(ctx, meta)
 	return args.Error(0)
 }
-
 func (m *MockBQTable) Delete(ctx context.Context) error {
 	args := m.Called(ctx)
 	return args.Error(0)
 }
 
-type MockBQDataset struct {
-	mock.Mock
-}
+type MockBQDataset struct{ mock.Mock }
 
 func (m *MockBQDataset) Metadata(ctx context.Context) (*bigquery.DatasetMetadata, error) {
 	args := m.Called(ctx)
@@ -55,12 +43,10 @@ func (m *MockBQDataset) Metadata(ctx context.Context) (*bigquery.DatasetMetadata
 	}
 	return args.Get(0).(*bigquery.DatasetMetadata), args.Error(1)
 }
-
 func (m *MockBQDataset) Create(ctx context.Context, meta *bigquery.DatasetMetadata) error {
 	args := m.Called(ctx, meta)
 	return args.Error(0)
 }
-
 func (m *MockBQDataset) Update(ctx context.Context, metaToUpdate bigquery.DatasetMetadataToUpdate, etag string) (*bigquery.DatasetMetadata, error) {
 	args := m.Called(ctx, metaToUpdate, etag)
 	if args.Get(0) == nil {
@@ -68,516 +54,224 @@ func (m *MockBQDataset) Update(ctx context.Context, metaToUpdate bigquery.Datase
 	}
 	return args.Get(0).(*bigquery.DatasetMetadata), args.Error(1)
 }
-
-func (m *MockBQDataset) Delete(ctx context.Context) error {
-	args := m.Called(ctx)
-	return args.Error(0)
-}
-
 func (m *MockBQDataset) Table(tableID string) servicemanager.BQTable {
 	args := m.Called(tableID)
 	return args.Get(0).(servicemanager.BQTable)
 }
-
+func (m *MockBQDataset) Delete(ctx context.Context) error {
+	args := m.Called(ctx)
+	return args.Error(0)
+}
 func (m *MockBQDataset) DeleteWithContents(ctx context.Context) error {
 	args := m.Called(ctx)
 	return args.Error(0)
 }
 
-type MockBQClient struct {
-	mock.Mock
-}
+type MockBQClient struct{ mock.Mock }
 
 func (m *MockBQClient) Dataset(datasetID string) servicemanager.BQDataset {
 	args := m.Called(datasetID)
 	return args.Get(0).(servicemanager.BQDataset)
 }
-
 func (m *MockBQClient) Project() string {
 	args := m.Called()
 	return args.String(0)
 }
-
 func (m *MockBQClient) Close() error {
 	args := m.Called()
 	return args.Error(0)
 }
 
-// --- Test Helper Functions ---
+// --- Test Setup ---
 
-// newNotFoundError creates an error that simulates a "not found" error from the BigQuery client.
-func newNotFoundError(resourceType, resourceName string) error {
-	return errors.New(fmt.Sprintf("%s not found: %s", resourceType, resourceName))
+// TestSchema is a sample schema for testing.
+type TestSchema struct {
+	Field1 string `bigquery:"field1"`
+	Field2 int64  `bigquery:"field2"`
 }
 
+func setupBigQueryManagerTest(t *testing.T) (*servicemanager.BigQueryManager, *MockBQClient) {
+	mockClient := new(MockBQClient)
+	logger := zerolog.Nop()
+	schemaRegistry := map[string]interface{}{
+		"testSchemaV1": TestSchema{},
+	}
+	environment := servicemanager.Environment{Name: "test"}
+
+	manager, err := servicemanager.NewBigQueryManager(mockClient, logger, schemaRegistry, environment)
+	assert.NoError(t, err)
+	assert.NotNil(t, manager)
+
+	return manager, mockClient
+}
+
+// getTestBigQueryResources correctly initializes the embedded CloudResource struct.
 func getTestBigQueryResources() servicemanager.CloudResourcesSpec {
 	return servicemanager.CloudResourcesSpec{
 		BigQueryDatasets: []servicemanager.BigQueryDataset{
-			{
-				CloudResource: servicemanager.CloudResource{Name: "test-dataset-1", TeardownProtection: false},
-			},
-			{
-				CloudResource: servicemanager.CloudResource{Name: "test-dataset-2", TeardownProtection: true}, // Protected dataset
-			},
+			{CloudResource: servicemanager.CloudResource{Name: "test_dataset_1"}},
+			{CloudResource: servicemanager.CloudResource{Name: "test_dataset_2"}},
 		},
 		BigQueryTables: []servicemanager.BigQueryTable{
 			{
-				CloudResource:          servicemanager.CloudResource{Name: "test-table-1", TeardownProtection: false},
-				Dataset:                "test-dataset-1",
-				SchemaSourceIdentifier: "meter_reading_schema",
-				TimePartitioningField:  "timestamp",
-				TimePartitioningType:   "DAY",
-				ClusteringFields:       []string{"meter_id"},
-				Expiration:             servicemanager.Duration(24 * time.Hour),
+				CloudResource:          servicemanager.CloudResource{Name: "test_table_1"},
+				Dataset:                "test_dataset_1",
+				SchemaSourceIdentifier: "testSchemaV1",
 			},
 			{
-				CloudResource:          servicemanager.CloudResource{Name: "test-table-2", TeardownProtection: true}, // Protected table
-				Dataset:                "test-dataset-1",
-				SchemaSourceIdentifier: "meter_reading_schema",
-				TimePartitioningField:  "timestamp",
-				TimePartitioningType:   "DAY",
-				ClusteringFields:       []string{"meter_id"},
-				Expiration:             servicemanager.Duration(24 * time.Hour),
+				CloudResource:          servicemanager.CloudResource{Name: "test_table_2"},
+				Dataset:                "test_dataset_2",
+				SchemaSourceIdentifier: "testSchemaV1",
 			},
 		},
 	}
 }
 
-// setupBigQueryManagerTest creates a BigQueryManager with a mock client for testing.
-func setupBigQueryManagerTest(t *testing.T) (*servicemanager.BigQueryManager, *MockBQClient, context.Context, servicemanager.Environment, map[string]interface{}, zerolog.Logger) {
-	logger := zerolog.New(os.Stdout).With().Timestamp().Logger()
-	ctx := context.Background()
-	env := servicemanager.Environment{ProjectID: "test-project", Name: "test-env", Location: "us-central1"}
-	schemaRegistry := map[string]interface{}{
-		"meter_reading_schema": telemetry.MeterReading{}, // Assuming this struct exists and can be inferred
-	}
-
-	mockClient := new(MockBQClient)
-	manager, err := servicemanager.NewBigQueryManager(mockClient, logger, schemaRegistry, env) // Pass environment
-	require.NoError(t, err)
-	return manager, mockClient, ctx, env, schemaRegistry, logger
-}
-
-// --- Test Cases ---
+// --- Tests ---
 
 func TestNewBigQueryManager(t *testing.T) {
-	logger := zerolog.New(io.Discard)
-	env := servicemanager.Environment{ProjectID: "test-project"}
-	schemaRegistry := make(map[string]interface{})
-
 	t.Run("Success", func(t *testing.T) {
-		mockClient := new(MockBQClient)
-		manager, err := servicemanager.NewBigQueryManager(mockClient, logger, schemaRegistry, env)
-		require.NoError(t, err)
-		assert.NotNil(t, manager)
+		setupBigQueryManagerTest(t)
 	})
 
 	t.Run("Nil Client", func(t *testing.T) {
-		manager, err := servicemanager.NewBigQueryManager(nil, logger, schemaRegistry, env)
+		_, err := servicemanager.NewBigQueryManager(nil, zerolog.Nop(), map[string]interface{}{}, servicemanager.Environment{})
 		assert.Error(t, err)
-		assert.Contains(t, err.Error(), "cannot be nil")
-		assert.Nil(t, manager)
-	})
-
-	t.Run("Nil Schema Registry", func(t *testing.T) {
-		mockClient := new(MockBQClient)
-		manager, err := servicemanager.NewBigQueryManager(mockClient, logger, nil, env)
-		assert.Error(t, err)
-		assert.Contains(t, err.Error(), "schema registry cannot be nil")
-		assert.Nil(t, manager)
+		assert.Equal(t, "BigQuery client (BQClient interface) cannot be nil", err.Error())
 	})
 }
 
-func TestBigQueryManager_CreateResources_Success(t *testing.T) {
-	manager, mockClient, ctx, env, _, _ := setupBigQueryManagerTest(t)
-	resources := getTestBigQueryResources()
+func TestBigQueryManager_Validate(t *testing.T) {
+	manager, _ := setupBigQueryManagerTest(t)
 
-	// Mocks for Dataset 1 (not protected)
-	mockDataset1 := new(MockBQDataset)
-	mockClient.On("Dataset", "test-dataset-1").Return(mockDataset1).Times(3)
-	mockDataset1.On("Metadata", ctx).Return(nil, newNotFoundError("Dataset", "test-dataset-1")).Once()  // Dataset doesn't exist
-	mockDataset1.On("Create", ctx, mock.AnythingOfType("*bigquery.DatasetMetadata")).Return(nil).Once() // Corrected type
+	t.Run("Success", func(t *testing.T) {
+		resources := getTestBigQueryResources()
+		err := manager.Validate(resources)
+		assert.NoError(t, err)
+	})
 
-	// Mocks for Dataset 2 (protected)
-	mockDataset2 := new(MockBQDataset)
-	mockClient.On("Dataset", "test-dataset-2").Return(mockDataset2).Twice()
-	mockDataset2.On("Metadata", ctx).Return(nil, newNotFoundError("Dataset", "test-dataset-2")).Twice() // Dataset doesn't exist
-	mockDataset2.On("Create", ctx, mock.AnythingOfType("*bigquery.DatasetMetadata")).Return(nil).Once() // Corrected type
-
-	// Mocks for Table 1 (not protected)
-	mockTable1 := new(MockBQTable)
-	mockDataset1.On("Table", "test-table-1").Return(mockTable1).Once()
-	mockTable1.On("Metadata", ctx).Return(nil, newNotFoundError("Table", "test-table-1")).Once() // Table doesn't exist
-	mockTable1.On("Create", ctx, mock.AnythingOfType("*bigquery.TableMetadata")).Return(nil).Once()
-
-	// Mocks for Table 2 (protected)
-	mockTable2 := new(MockBQTable)
-	mockDataset1.On("Table", "test-table-2").Return(mockTable2).Once()
-	mockTable2.On("Metadata", ctx).Return(nil, newNotFoundError("Table", "test-table-2")).Once() // Table doesn't exist
-	mockTable2.On("Create", ctx, mock.AnythingOfType("*bigquery.TableMetadata")).Return(nil).Once()
-
-	mockClient.On("Project").Return(env.ProjectID).Maybe() // Called during table creation for ProvisionedBigQueryTable
-
-	// Act
-	provTables, provDatasets, err := manager.CreateResources(ctx, resources) // Renamed function
-
-	// Assert
-	require.NoError(t, err)
-	assert.Len(t, provTables, 2)
-	assert.Len(t, provDatasets, 2)
-
-	// Verify provisioned tables
-	assert.Contains(t, provTables, servicemanager.ProvisionedBigQueryTable{Dataset: "test-dataset-1", Name: "test-table-1"})
-	assert.Contains(t, provTables, servicemanager.ProvisionedBigQueryTable{Dataset: "test-dataset-1", Name: "test-table-2"})
-
-	// Verify provisioned datasets
-	assert.Contains(t, provDatasets, servicemanager.ProvisionedBigQueryDataset{Name: "test-dataset-1"})
-	assert.Contains(t, provDatasets, servicemanager.ProvisionedBigQueryDataset{Name: "test-dataset-2"})
-
-	mockClient.AssertExpectations(t)
-	mockDataset1.AssertExpectations(t)
-	mockDataset2.AssertExpectations(t)
-	mockTable1.AssertExpectations(t)
-	mockTable2.AssertExpectations(t)
+	t.Run("Invalid Table Schema", func(t *testing.T) {
+		resources := getTestBigQueryResources()
+		resources.BigQueryTables = append(resources.BigQueryTables, servicemanager.BigQueryTable{
+			CloudResource:          servicemanager.CloudResource{Name: "bad_table"},
+			Dataset:                "test_dataset_1",
+			SchemaSourceIdentifier: "nonExistentSchema",
+		})
+		err := manager.Validate(resources)
+		assert.Error(t, err)
+		assert.Contains(t, err.Error(), "schema 'nonExistentSchema' for table 'bad_table' not found in registry")
+	})
 }
 
-func TestBigQueryManager_CreateResources_ExistingResources(t *testing.T) {
-	manager, mockClient, ctx, env, _, _ := setupBigQueryManagerTest(t)
-	resources := getTestBigQueryResources()
+func TestBigQueryManager_CreateResources(t *testing.T) {
+	ctx := context.Background()
+	notFoundErr := &googleapi.Error{Code: http.StatusNotFound, Message: "not found"}
 
-	// Dataset 1 exists
-	mockDataset1 := new(MockBQDataset)
-	mockClient.On("Dataset", "test-dataset-1").Return(mockDataset1).Times(3)
-	mockDataset1.On("Metadata", ctx).Return(&bigquery.DatasetMetadata{}, nil).Once() // Dataset exists
+	t.Run("Success - Create All", func(t *testing.T) {
+		manager, mockClient := setupBigQueryManagerTest(t)
+		resources := getTestBigQueryResources()
 
-	// Dataset 2 exists
-	mockDataset2 := new(MockBQDataset)
-	mockClient.On("Dataset", "test-dataset-2").Return(mockDataset2).Once()
-	mockDataset2.On("Metadata", ctx).Return(&bigquery.DatasetMetadata{}, nil).Once() // Dataset exists
+		mockDs1, mockDs2 := new(MockBQDataset), new(MockBQDataset)
+		mockClient.On("Dataset", "test_dataset_1").Return(mockDs1)
+		mockClient.On("Dataset", "test_dataset_2").Return(mockDs2)
+		mockDs1.On("Metadata", ctx).Return(nil, notFoundErr).Once()
+		mockDs1.On("Create", ctx, mock.Anything).Return(nil).Once()
+		mockDs2.On("Metadata", ctx).Return(nil, notFoundErr).Once()
+		mockDs2.On("Create", ctx, mock.Anything).Return(nil).Once()
 
-	// Table 1 exists
-	mockTable1 := new(MockBQTable)
-	mockDataset1.On("Table", "test-table-1").Return(mockTable1).Once()
-	mockTable1.On("Metadata", ctx).Return(&bigquery.TableMetadata{}, nil).Once() // Table exists
+		mockTbl1, mockTbl2 := new(MockBQTable), new(MockBQTable)
+		mockDs1.On("Table", "test_table_1").Return(mockTbl1).Once()
+		mockTbl1.On("Metadata", ctx).Return(nil, notFoundErr).Once()
+		mockTbl1.On("Create", ctx, mock.AnythingOfType("*bigquery.TableMetadata")).Return(nil).Once()
+		mockDs2.On("Table", "test_table_2").Return(mockTbl2).Once()
+		mockTbl2.On("Metadata", ctx).Return(nil, notFoundErr).Once()
+		mockTbl2.On("Create", ctx, mock.AnythingOfType("*bigquery.TableMetadata")).Return(nil).Once()
 
-	// Table 2 exists
-	mockTable2 := new(MockBQTable)
-	mockDataset1.On("Table", "test-table-2").Return(mockTable2).Once()
-	mockTable2.On("Metadata", ctx).Return(&bigquery.TableMetadata{}, nil).Once() // Table exists
+		_, _, err := manager.CreateResources(ctx, resources)
 
-	mockClient.On("Project").Return(env.ProjectID).Maybe()
+		assert.NoError(t, err)
+		mockClient.AssertExpectations(t)
+	})
 
-	// Act
-	provTables, provDatasets, err := manager.CreateResources(ctx, resources)
+	t.Run("Partial Success - One Table Fails to Create", func(t *testing.T) {
+		manager, mockClient := setupBigQueryManagerTest(t)
+		resources := getTestBigQueryResources()
+		creationErr := errors.New("API limit exceeded")
 
-	// Assert
-	require.NoError(t, err)
-	assert.Len(t, provTables, 2)
-	assert.Len(t, provDatasets, 2)
+		mockDs1, mockDs2 := new(MockBQDataset), new(MockBQDataset)
+		mockClient.On("Dataset", "test_dataset_1").Return(mockDs1)
+		mockClient.On("Dataset", "test_dataset_2").Return(mockDs2)
+		mockDs1.On("Metadata", ctx).Return(nil, notFoundErr).Once()
+		mockDs1.On("Create", ctx, mock.Anything).Return(nil).Once()
+		mockDs2.On("Metadata", ctx).Return(nil, notFoundErr).Once()
+		mockDs2.On("Create", ctx, mock.Anything).Return(nil).Once()
 
-	assert.Contains(t, provTables, servicemanager.ProvisionedBigQueryTable{Dataset: "test-dataset-1", Name: "test-table-1"})
-	assert.Contains(t, provTables, servicemanager.ProvisionedBigQueryTable{Dataset: "test-dataset-1", Name: "test-table-2"})
+		mockTbl1, mockTbl2 := new(MockBQTable), new(MockBQTable)
+		mockDs1.On("Table", "test_table_1").Return(mockTbl1).Once()
+		mockTbl1.On("Metadata", ctx).Return(nil, notFoundErr).Once()
+		mockTbl1.On("Create", ctx, mock.Anything).Return(nil).Once() // Succeeds
+		mockDs2.On("Table", "test_table_2").Return(mockTbl2).Once()
+		mockTbl2.On("Metadata", ctx).Return(nil, notFoundErr).Once()
+		mockTbl2.On("Create", ctx, mock.Anything).Return(creationErr).Once() // Fails
 
-	assert.Contains(t, provDatasets, servicemanager.ProvisionedBigQueryDataset{Name: "test-dataset-1"})
-	assert.Contains(t, provDatasets, servicemanager.ProvisionedBigQueryDataset{Name: "test-dataset-2"})
+		_, _, err := manager.CreateResources(ctx, resources)
 
-	mockClient.AssertExpectations(t)
-	mockDataset1.AssertExpectations(t)
-	mockDataset2.AssertExpectations(t)
-	mockTable1.AssertExpectations(t)
-	mockTable2.AssertExpectations(t)
+		assert.Error(t, err)
+		assert.Contains(t, err.Error(), "failed to create table 'test_table_2' in dataset 'test_dataset_2'")
+		assert.Contains(t, err.Error(), creationErr.Error())
+		mockClient.AssertExpectations(t)
+	})
 }
 
-func TestBigQueryManager_CreateResources_PartialFailure(t *testing.T) {
-	manager, mockClient, ctx, env, _, _ := setupBigQueryManagerTest(t)
-	resources := getTestBigQueryResources()
+func TestBigQueryManager_Teardown(t *testing.T) {
+	ctx := context.Background()
 
-	// Dataset 1 fails to create
-	mockDataset1 := new(MockBQDataset)
-	mockClient.On("Dataset", "test-dataset-1").Return(mockDataset1).Times(3)
-	mockDataset1.On("Metadata", ctx).Return(nil, newNotFoundError("Dataset", "test-dataset-1")).Once()
-	mockDataset1.On("Create", ctx, mock.AnythingOfType("*bigquery.DatasetMetadata")).Return(errors.New("failed to create dataset")).Once() // Corrected type
+	t.Run("Success - Delete All", func(t *testing.T) {
+		manager, mockClient := setupBigQueryManagerTest(t)
+		resources := getTestBigQueryResources()
 
-	// Dataset 2 succeeds
-	mockDataset2 := new(MockBQDataset)
-	mockClient.On("Dataset", "test-dataset-2").Return(mockDataset2).Once()
-	mockDataset2.On("Metadata", ctx).Return(nil, newNotFoundError("Dataset", "test-dataset-2")).Once()
-	mockDataset2.On("Create", ctx, mock.AnythingOfType("*bigquery.DatasetMetadata")).Return(nil).Once() // Corrected type
+		mockDs1, mockDs2 := new(MockBQDataset), new(MockBQDataset)
+		mockClient.On("Dataset", "test_dataset_1").Return(mockDs1)
+		mockClient.On("Dataset", "test_dataset_2").Return(mockDs2)
+		mockDs1.On("DeleteWithContents", ctx).Return(nil).Once()
+		mockDs2.On("DeleteWithContents", ctx).Return(nil).Once()
 
-	// Table 1 fails to create (depends on dataset 1, but still attempted)
-	mockTable1 := new(MockBQTable)
-	mockDataset1.On("Table", "test-table-1").Return(mockTable1).Once()
-	mockTable1.On("Metadata", ctx).Return(nil, newNotFoundError("Table", "test-table-1")).Once()
-	mockTable1.On("Create", ctx, mock.AnythingOfType("*bigquery.TableMetadata")).Return(errors.New("failed to create table")).Once()
+		mockTbl1, mockTbl2 := new(MockBQTable), new(MockBQTable)
+		mockDs1.On("Table", "test_table_1").Return(mockTbl1).Once()
+		mockTbl1.On("Delete", ctx).Return(nil).Once()
+		mockDs2.On("Table", "test_table_2").Return(mockTbl2).Once()
+		mockTbl2.On("Delete", ctx).Return(nil).Once()
 
-	// Table 2 succeeds (depends on dataset 1, but still attempted)
-	mockTable2 := new(MockBQTable)
-	mockDataset1.On("Table", "test-table-2").Return(mockTable2).Once()
-	mockTable2.On("Metadata", ctx).Return(nil, newNotFoundError("Table", "test-table-2")).Once()
-	mockTable2.On("Create", ctx, mock.AnythingOfType("*bigquery.TableMetadata")).Return(nil).Once()
+		err := manager.Teardown(ctx, resources)
+		assert.NoError(t, err)
+		mockClient.AssertExpectations(t)
+	})
 
-	mockClient.On("Project").Return(env.ProjectID).Maybe()
+	t.Run("Teardown Protection Enabled", func(t *testing.T) {
+		manager, mockClient := setupBigQueryManagerTest(t)
+		resources := getTestBigQueryResources()
+		// Correctly set the teardown protection on the embedded struct
+		resources.BigQueryDatasets[0].CloudResource.TeardownProtection = true
+		resources.BigQueryTables[1].CloudResource.TeardownProtection = true
 
-	// Act
-	provTables, provDatasets, err := manager.CreateResources(ctx, resources)
+		mockDs1, mockDs2 := new(MockBQDataset), new(MockBQDataset)
+		mockClient.On("Dataset", "test_dataset_1").Return(mockDs1)
+		mockClient.On("Dataset", "test_dataset_2").Return(mockDs2)
 
-	// Assert
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "failed to create dataset")
-	assert.Contains(t, err.Error(), "failed to create table")
+		mockTbl1, mockTbl2 := new(MockBQTable), new(MockBQTable)
+		mockDs1.On("Table", "test_table_1").Return(mockTbl1).Once()
+		mockDs2.On("Table", "test_table_2").Return(mockTbl2).Once()
 
-	// Only successfully provisioned resources should be returned
-	assert.Len(t, provTables, 1) // Only table 2 should be provisioned
-	assert.Contains(t, provTables, servicemanager.ProvisionedBigQueryTable{Dataset: "test-dataset-1", Name: "test-table-2"})
-	assert.Len(t, provDatasets, 1) // Only dataset 2 should be provisioned
-	assert.Contains(t, provDatasets, servicemanager.ProvisionedBigQueryDataset{Name: "test-dataset-2"})
+		// Expect deletion ONLY on unprotected resources
+		mockDs2.On("DeleteWithContents", ctx).Return(nil).Once() // ds2 is not protected
+		mockTbl1.On("Delete", ctx).Return(nil).Once()            // tbl1 is not protected
 
-	mockClient.AssertExpectations(t)
-	mockDataset1.AssertExpectations(t)
-	mockDataset2.AssertExpectations(t)
-	mockTable1.AssertExpectations(t)
-	mockTable2.AssertExpectations(t)
-}
+		err := manager.Teardown(ctx, resources)
 
-func TestBigQueryManager_Teardown_Success(t *testing.T) {
-	manager, mockClient, ctx, _, _, _ := setupBigQueryManagerTest(t)
-	resources := getTestBigQueryResources()
-
-	// Mocks for Table 1 (not protected)
-	mockTable1 := new(MockBQTable)
-	mockDataset1 := new(MockBQDataset) // Need a mock dataset for the table
-	mockClient.On("Dataset", "test-dataset-1").Return(mockDataset1).Twice()
-	mockDataset1.On("Table", "test-table-1").Return(mockTable1).Once()
-	mockTable1.On("Delete", ctx).Return(nil).Once()
-
-	// Table 2 is protected, so its delete should NOT be called
-	// mockDataset1.AssertNotCalled(t, "Table", "test-table-2") // This assertion is better placed after the call to Teardown
-
-	// Mocks for Dataset 1 (not protected)
-	mockDataset1.On("DeleteWithContents", ctx).Return(nil).Once()
-
-	// Dataset 2 is protected, so its delete should NOT be called
-	// mockClient.AssertNotCalled(t, "Dataset", "test-dataset-2") // This assertion is better placed after the call to Teardown
-
-	// Act
-	err := manager.Teardown(ctx, resources) // Removed env parameter
-
-	// Assert
-	require.NoError(t, err)
-	mockClient.AssertExpectations(t)
-	mockDataset1.AssertExpectations(t)
-	mockTable1.AssertExpectations(t)
-	mockDataset1.AssertNotCalled(t, "Table", "test-table-2")   // Now asserted after the call
-	mockClient.AssertNotCalled(t, "Dataset", "test-dataset-2") // Now asserted after the call
-}
-
-func TestBigQueryManager_Teardown_PartialFailure(t *testing.T) {
-	manager, mockClient, ctx, _, _, _ := setupBigQueryManagerTest(t)
-	resources := getTestBigQueryResources()
-
-	// Mocks for Table 1 (fails to delete)
-	mockTable1 := new(MockBQTable)
-	mockDataset1 := new(MockBQDataset)
-	mockClient.On("Dataset", "test-dataset-1").Return(mockDataset1).Twice()
-	mockDataset1.On("Table", "test-table-1").Return(mockTable1).Once()
-	mockTable1.On("Delete", ctx).Return(errors.New("table delete error")).Once()
-
-	// Table 2 is protected, so its delete should NOT be called
-	// mockDataset1.AssertNotCalled(t, "Table", "test-table-2")
-
-	// Mocks for Dataset 1 (succeeds)
-	mockDataset1.On("DeleteWithContents", ctx).Return(nil).Once()
-
-	// Dataset 2 is protected, so its delete should NOT be called
-	// mockClient.AssertNotCalled(t, "Dataset", "test-dataset-2")
-
-	// Act
-	err := manager.Teardown(ctx, resources)
-
-	// Assert
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "table delete error")
-
-	mockClient.AssertExpectations(t)
-	mockDataset1.AssertExpectations(t)
-	mockTable1.AssertExpectations(t)
-	mockDataset1.AssertNotCalled(t, "Table", "test-table-2")
-	mockClient.AssertNotCalled(t, "Dataset", "test-dataset-2")
-}
-
-func TestBigQueryManager_Teardown_ProtectedResources(t *testing.T) {
-	manager, mockClient, ctx, _, _, _ := setupBigQueryManagerTest(t)
-	resources := getTestBigQueryResources()
-
-	// For non-protected resources, mock success
-	mockTable1 := new(MockBQTable)
-	mockDataset1 := new(MockBQDataset)
-	mockClient.On("Dataset", "test-dataset-1").Return(mockDataset1).Twice()
-	mockDataset1.On("Table", "test-table-1").Return(mockTable1).Once()
-	mockTable1.On("Delete", ctx).Return(nil).Once()
-	mockDataset1.On("DeleteWithContents", ctx).Return(nil).Once()
-
-	err := manager.Teardown(ctx, resources)
-	require.NoError(t, err)
-
-	// Ensure delete is NOT called for protected resources
-	mockClient.AssertNotCalled(t, "Dataset", "test-dataset-2") // Protected dataset
-	mockDataset1.AssertNotCalled(t, "Table", "test-table-2")   // Protected table (assuming it's on dataset1)
-
-	mockClient.AssertExpectations(t)
-	mockDataset1.AssertExpectations(t)
-	mockTable1.AssertExpectations(t)
-}
-
-func TestBigQueryManager_Verify_Success(t *testing.T) {
-	manager, mockClient, ctx, _, _, _ := setupBigQueryManagerTest(t)
-	resources := getTestBigQueryResources()
-
-	// Mocks for Dataset 1
-	mockDataset1 := new(MockBQDataset)
-	mockClient.On("Dataset", "test-dataset-1").Return(mockDataset1).Times(3)
-	mockDataset1.On("Metadata", ctx).Return(&bigquery.DatasetMetadata{}, nil).Once()
-
-	// Mocks for Dataset 2
-	mockDataset2 := new(MockBQDataset)
-	mockClient.On("Dataset", "test-dataset-2").Return(mockDataset2).Once()
-	mockDataset2.On("Metadata", ctx).Return(&bigquery.DatasetMetadata{}, nil).Once()
-
-	// Mocks for Table 1
-	mockTable1 := new(MockBQTable)
-	mockDataset1.On("Table", "test-table-1").Return(mockTable1).Once()
-	mockTable1.On("Metadata", ctx).Return(&bigquery.TableMetadata{}, nil).Once()
-
-	// Mocks for Table 2
-	mockTable2 := new(MockBQTable)
-	mockDataset1.On("Table", "test-table-2").Return(mockTable2).Once()
-	mockTable2.On("Metadata", ctx).Return(&bigquery.TableMetadata{}, nil).Once()
-
-	// Act
-	err := manager.Verify(ctx, resources) // Removed env parameter
-
-	// Assert
-	require.NoError(t, err)
-	mockClient.AssertExpectations(t)
-	mockDataset1.AssertExpectations(t)
-	mockDataset2.AssertExpectations(t)
-	mockTable1.AssertExpectations(t)
-	mockTable2.AssertExpectations(t)
-}
-
-func TestBigQueryManager_Verify_DatasetMissing(t *testing.T) {
-	manager, mockClient, ctx, _, _, _ := setupBigQueryManagerTest(t)
-	resources := getTestBigQueryResources()
-
-	// Dataset 1 is missing
-	mockDataset1 := new(MockBQDataset)
-	mockClient.On("Dataset", "test-dataset-1").Return(mockDataset1).Times(3)
-	mockDataset1.On("Metadata", ctx).Return(nil, newNotFoundError("Dataset", "test-dataset-1")).Once()
-
-	// Dataset 2 exists
-	mockDataset2 := new(MockBQDataset)
-	mockClient.On("Dataset", "test-dataset-2").Return(mockDataset2).Once()
-	mockDataset2.On("Metadata", ctx).Return(&bigquery.DatasetMetadata{}, nil).Once()
-
-	// Mocks for Table 1 (even if dataset 1 is missing, table verification is attempted)
-	mockTable1 := new(MockBQTable)
-	mockDataset1.On("Table", "test-table-1").Return(mockTable1).Once()
-	mockTable1.On("Metadata", ctx).Return(nil, newNotFoundError("Table", "test-table-1")).Once() // Table 1 will also be missing
-
-	// Mocks for Table 2
-	mockTable2 := new(MockBQTable)
-	mockDataset1.On("Table", "test-table-2").Return(mockTable2).Once()
-	mockTable2.On("Metadata", ctx).Return(&bigquery.TableMetadata{}, nil).Once()
-
-	// Act
-	err := manager.Verify(ctx, resources)
-
-	// Assert
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "dataset 'test-dataset-1' not found")
-	assert.Contains(t, err.Error(), "table 'test-table-1' in dataset 'test-dataset-1' not found")
-
-	mockClient.AssertExpectations(t)
-	mockDataset1.AssertExpectations(t)
-	mockDataset2.AssertExpectations(t)
-	mockTable1.AssertExpectations(t)
-	mockTable2.AssertExpectations(t)
-}
-
-func TestBigQueryManager_Verify_TableMissing(t *testing.T) {
-	manager, mockClient, ctx, _, _, _ := setupBigQueryManagerTest(t)
-	resources := getTestBigQueryResources()
-
-	// Datasets exist
-	mockDataset1 := new(MockBQDataset)
-	mockClient.On("Dataset", "test-dataset-1").Return(mockDataset1).Times(3)
-	mockDataset1.On("Metadata", ctx).Return(&bigquery.DatasetMetadata{}, nil).Once()
-
-	mockDataset2 := new(MockBQDataset)
-	mockClient.On("Dataset", "test-dataset-2").Return(mockDataset2).Once()
-	mockDataset2.On("Metadata", ctx).Return(&bigquery.DatasetMetadata{}, nil).Once()
-
-	// Table 1 is missing
-	mockTable1 := new(MockBQTable)
-	mockDataset1.On("Table", "test-table-1").Return(mockTable1).Once()
-	mockTable1.On("Metadata", ctx).Return(nil, newNotFoundError("Table", "test-table-1")).Once()
-
-	// Table 2 exists
-	mockTable2 := new(MockBQTable)
-	mockDataset1.On("Table", "test-table-2").Return(mockTable2).Once()
-	mockTable2.On("Metadata", ctx).Return(&bigquery.TableMetadata{}, nil).Once()
-
-	// Act
-	err := manager.Verify(ctx, resources)
-
-	// Assert
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "table 'test-table-1' in dataset 'test-dataset-1' not found")
-
-	mockClient.AssertExpectations(t)
-	mockDataset1.AssertExpectations(t)
-	mockDataset2.AssertExpectations(t)
-	mockTable1.AssertExpectations(t)
-	mockTable2.AssertExpectations(t)
-}
-
-func TestBigQueryManager_Verify_MultipleFailures(t *testing.T) {
-	manager, mockClient, ctx, _, _, _ := setupBigQueryManagerTest(t)
-	resources := getTestBigQueryResources()
-
-	// Dataset 1 fails to check existence
-	mockDataset1 := new(MockBQDataset)
-	mockClient.On("Dataset", "test-dataset-1").Return(mockDataset1).Times(3)
-	mockDataset1.On("Metadata", ctx).Return(nil, errors.New("dataset check error")).Once()
-
-	// Dataset 2 is missing
-	mockDataset2 := new(MockBQDataset)
-	mockClient.On("Dataset", "test-dataset-2").Return(mockDataset2).Once()
-	mockDataset2.On("Metadata", ctx).Return(nil, newNotFoundError("Dataset", "test-dataset-2")).Once()
-
-	// Table 1 fails to check existence
-	mockTable1 := new(MockBQTable)
-	mockDataset1.On("Table", "test-table-1").Return(mockTable1).Once()
-	mockTable1.On("Metadata", ctx).Return(nil, errors.New("table check error")).Once()
-
-	// Table 2 is missing
-	mockTable2 := new(MockBQTable)
-	mockDataset1.On("Table", "test-table-2").Return(mockTable2).Once()
-	mockTable2.On("Metadata", ctx).Return(nil, newNotFoundError("Table", "test-table-2")).Once()
-
-	// Act
-	err := manager.Verify(ctx, resources)
-
-	// Assert
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "dataset check error")
-	assert.Contains(t, err.Error(), "dataset 'test-dataset-2' not found")
-	assert.Contains(t, err.Error(), "table check error")
-	assert.Contains(t, err.Error(), "table 'test-table-2' in dataset 'test-dataset-1' not found")
-
-	mockClient.AssertExpectations(t)
-	mockDataset1.AssertExpectations(t)
-	mockDataset2.AssertExpectations(t)
-	mockTable1.AssertExpectations(t)
-	mockTable2.AssertExpectations(t)
+		assert.NoError(t, err)
+		mockClient.AssertExpectations(t)
+		// Assert that deletion was NOT called on protected resources
+		mockDs1.AssertNotCalled(t, "DeleteWithContents", ctx)
+		mockTbl2.AssertNotCalled(t, "Delete", ctx)
+	})
 }

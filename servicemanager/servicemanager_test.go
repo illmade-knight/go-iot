@@ -3,165 +3,136 @@ package servicemanager_test
 import (
 	"context"
 	"errors"
-	servicemanager2 "github.com/illmade-knight/go-iot/servicemanager"
-	"io"
 	"testing"
 
+	"github.com/illmade-knight/go-iot/servicemanager"
 	"github.com/rs/zerolog"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/require"
 )
 
-// --- Test Helper ---
+// setupServiceManagerTest creates a ServiceManager with mock sub-managers for testing.
+func setupServiceManagerTest(t *testing.T) (*servicemanager.ServiceManager, *MockMessagingManager, *MockStorageManager, *MockBigQueryManager, *servicemanager.MicroserviceArchitecture) {
+	mockMsg := new(MockMessagingManager)
+	mockStore := new(MockStorageManager)
+	mockBq := new(MockBigQueryManager)
 
-// getTestConfigWithBQ provides a more complex configuration for testing teardown scenarios,
-// including dataflows with different resource types to ensure managers are called correctly.
-func getTestConfigWithBQ() *servicemanager2.MicroserviceArchitecture {
-	return &servicemanager2.MicroserviceArchitecture{
-		Environment: servicemanager2.Environment{
-			Name:      "default",
-			ProjectID: "ignore-project",
-			Location:  "eu-west1",
-		},
-		DeploymentEnvironments: map[string]servicemanager2.Environment{
-			"test": {
-				Name:               "test",
-				ProjectID:          "test-project",
-				TeardownProtection: false,
+	// Create a sample architecture with two dataflows
+	arch := &servicemanager.MicroserviceArchitecture{
+		Dataflows: map[string]servicemanager.ResourceGroup{
+			"dataflow1": {
+				Name: "dataflow1",
+				Resources: servicemanager.CloudResourcesSpec{
+					Topics: []servicemanager.TopicConfig{{CloudResource: servicemanager.CloudResource{Name: "df1-topic"}}},
+				},
+				Lifecycle: &servicemanager.LifecyclePolicy{Strategy: servicemanager.LifecycleStrategyEphemeral},
 			},
-		},
-		Dataflows: map[string]servicemanager2.ResourceGroup{
-			"ephemeral-topics": {
-				Name: "dataflow-ephemeral-topics",
-				Lifecycle: &servicemanager2.LifecyclePolicy{
-					Strategy: servicemanager2.LifecycleStrategyEphemeral,
+			"dataflow2": {
+				Name: "dataflow2",
+				Resources: servicemanager.CloudResourcesSpec{
+					GCSBuckets: []servicemanager.GCSBucket{{CloudResource: servicemanager.CloudResource{Name: "df2-bucket"}}},
 				},
-				Resources: servicemanager2.CloudResourcesSpec{
-					Topics: []servicemanager2.TopicConfig{{
-						CloudResource: servicemanager2.CloudResource{
-							Name:               "topic1",
-							TeardownProtection: false,
-						},
-					}},
-				},
-			},
-			"ephemeral-gcs": {
-				Name: "dataflow-ephemeral-gcs",
-				Lifecycle: &servicemanager2.LifecyclePolicy{
-					Strategy: servicemanager2.LifecycleStrategyEphemeral,
-				},
-				Resources: servicemanager2.CloudResourcesSpec{
-					GCSBuckets: []servicemanager2.GCSBucket{{
-						CloudResource: servicemanager2.CloudResource{
-							Name:               "bucket2",
-							TeardownProtection: false,
-						}},
-					},
-				},
-			},
-			// ADDED a dataflow with BQ resources to specifically test BQ failure
-			"ephemeral-bq": {
-				Name: "dataflow-ephemeral-bq",
-				Lifecycle: &servicemanager2.LifecyclePolicy{
-					Strategy: servicemanager2.LifecycleStrategyEphemeral,
-				},
-				Resources: servicemanager2.CloudResourcesSpec{
-					BigQueryDatasets: []servicemanager2.BigQueryDataset{{CloudResource: servicemanager2.CloudResource{Name: "dataset-to-fail"}}},
-					BigQueryTables:   []servicemanager2.BigQueryTable{{CloudResource: servicemanager2.CloudResource{Name: "table-to-fail"}, Dataset: "dataset-to-fail"}},
-				},
-			},
-			"permanent": {
-				Name: "dataflow-permanent",
-				Lifecycle: &servicemanager2.LifecyclePolicy{
-					Strategy: servicemanager2.LifecycleStrategyPermanent,
-				},
-				Resources: servicemanager2.CloudResourcesSpec{
-					BigQueryDatasets: []servicemanager2.BigQueryDataset{{CloudResource: servicemanager2.CloudResource{
-						Name:               "dataset-permanent",
-						TeardownProtection: true,
-					}}},
-				},
+				Lifecycle: &servicemanager.LifecyclePolicy{Strategy: servicemanager.LifecycleStrategyPermanent}, // Not ephemeral
 			},
 		},
 	}
+
+	manager, err := servicemanager.NewServiceManagerFromManagers(mockMsg, mockStore, mockBq, zerolog.Nop())
+	require.NoError(t, err)
+	require.NotNil(t, manager)
+
+	return manager, mockMsg, mockStore, mockBq, arch
 }
 
-// --- Test Cases ---
+// --- Tests ---
 
-func TestServiceManager_TeardownAll_Failure(t *testing.T) {
+func TestServiceManager_SynthesizeAllResources(t *testing.T) {
+	manager, _, _, _, arch := setupServiceManagerTest(t)
+
+	// Action
+	synthesized := manager.SynthesizeAllResources(arch)
+
+	// Assert
+	assert.Len(t, synthesized.Topics, 1, "Should have aggregated topics from all dataflows")
+	assert.Len(t, synthesized.GCSBuckets, 1, "Should have aggregated buckets from all dataflows")
+	assert.Equal(t, "df1-topic", synthesized.Topics[0].Name)
+	assert.Equal(t, "df2-bucket", synthesized.GCSBuckets[0].Name)
+}
+
+func TestServiceManager_SetupAll(t *testing.T) {
+	manager, mockMsg, mockStore, mockBq, arch := setupServiceManagerTest(t)
 	ctx := context.Background()
-	logger := zerolog.New(io.Discard)
-	// Use the new config with a dataflow that has BigQuery resources
-	testCfg := getTestConfigWithBQ()
-	projectID := "test-project"
 
-	t.Run("TeardownAll returns aggregated error on BigQuery failure", func(t *testing.T) {
-		// Arrange
-		mockMsgClient := new(MockMessagingClient)
-		mockStoreClient := new(MockStorageClient)
-		mockBqClient := new(MockBQClient)
-		servicesDef, err := servicemanager2.NewInMemoryServicesDefinition(testCfg)
-		require.NoError(t, err)
+	// Mock the sub-manager calls. Each should be called twice (once for each dataflow).
+	mockMsg.On("CreateResources", ctx, mock.Anything).Return([]servicemanager.ProvisionedTopic{}, []servicemanager.ProvisionedSubscription{}, nil).Twice()
+	mockStore.On("CreateResources", ctx, mock.Anything).Return([]servicemanager.ProvisionedGCSBucket{}, nil).Twice()
+	mockBq.On("CreateResources", ctx, mock.Anything).Return([]servicemanager.ProvisionedBigQueryTable{}, []servicemanager.ProvisionedBigQueryDataset{}, nil).Twice()
 
-		// The teardown loop runs in reverse. We expect it to process:
-		// 1. dataflow-ephemeral-bq (FAIL BQ)
-		// 2. dataflow-ephemeral-gcs (SUCCEED GCS)
-		// 3. dataflow-ephemeral-topics (SUCCEED TOPICS)
-		// Permanent dataflows are skipped.
+	// Action
+	_, err := manager.SetupAll(ctx, arch)
 
-		// --- MOCK SETUP FOR dataflow-ephemeral-bq (This will FAIL) ---
-		mockBqDatasetFail := new(MockBQDataset)
-		mockBqTableFail := new(MockBQTable)
-		// This is the root cause of the failure.
-		mockBqTableFail.On("Delete", ctx).Return(errors.New("mock bq table deletion error")).Once()
-		// Dataset deletion still proceeds and succeeds after table deletion fails.
-		mockBqDatasetFail.On("Delete", ctx).Return(nil).Once()
-		mockBqDatasetFail.On("Table", "table-to-fail").Return(mockBqTableFail).Once()
-		// CRITICAL FIX: The BQClient.Dataset method is called TWICE for this dataflow:
-		// Once in `teardownTables` and once in `teardownDatasets`.
-		mockBqClient.On("Dataset", "dataset-to-fail").Return(mockBqDatasetFail).Twice()
+	// Assert
+	assert.NoError(t, err)
+	mockMsg.AssertExpectations(t)
+	mockStore.AssertExpectations(t)
+	mockBq.AssertExpectations(t)
+}
 
-		// --- MOCK SETUP FOR dataflow-ephemeral-gcs (This will SUCCEED) ---
-		mockBucket2 := new(MockBucketHandle)
-		mockStoreClient.On("Bucket", "bucket2").Return(mockBucket2).Once()
-		mockBucket2.On("Attrs", ctx).Return(&servicemanager2.BucketAttributes{}, nil).Once()
-		mockBucket2.On("Delete", ctx).Return(nil).Once()
+func TestServiceManager_TeardownAll(t *testing.T) {
+	manager, mockMsg, mockStore, mockBq, arch := setupServiceManagerTest(t)
+	ctx := context.Background()
 
-		// --- MOCK SETUP FOR dataflow-ephemeral-topics (This will SUCCEED) ---
-		mockTopic1 := new(MockMessagingTopic)
-		mockMsgClient.On("Topic", "topic1").Return(mockTopic1).Once()
-		mockTopic1.On("Delete", ctx).Return(nil).Once()
+	// Mock the sub-manager calls. They should only be called ONCE, for the ephemeral dataflow ("dataflow1").
+	df1Resources := arch.Dataflows["dataflow1"].Resources
+	mockMsg.On("Teardown", ctx, df1Resources).Return(nil).Once()
+	mockStore.On("Teardown", ctx, df1Resources).Return(nil).Once()
+	mockBq.On("Teardown", ctx, df1Resources).Return(nil).Once()
 
-		// We expect Project() to be called by the BQ Manager for EACH of the 3 ephemeral dataflows.
-		mockBqClient.On("Project").Return(projectID).Times(3)
+	// Action
+	err := manager.TeardownAll(ctx, arch)
 
-		architecture, err := servicesDef.GetMicroserviceArchitecture()
-		require.NoError(t, err)
+	// Assert
+	assert.NoError(t, err)
+	mockMsg.AssertExpectations(t)
+	mockStore.AssertExpectations(t)
+	mockBq.AssertExpectations(t)
+}
 
-		// Act
-		sm, err := servicemanager2.NewServiceManagerFromClients(mockMsgClient, mockStoreClient, mockBqClient, architecture, nil, logger)
-		require.NoError(t, err)
-		err = sm.TeardownAll(ctx)
+func TestServiceManager_SetupDataflow_Failure(t *testing.T) {
+	manager, mockMsg, mockStore, mockBq, arch := setupServiceManagerTest(t)
+	ctx := context.Background()
+	storageErr := errors.New("bucket already exists and is owned by another project")
 
-		// Assert
-		require.Error(t, err, "Expected an error to be returned from TeardownAll")
-		// Check that the error message contains details from the failed dataflow.
-		assert.Contains(t, err.Error(), "failed to teardown dataflow 'dataflow-ephemeral-bq'")
-		// Check that it identifies the correct sub-manager.
-		assert.Contains(t, err.Error(), "BigQuery teardown failed")
-		// Check that it contains the root cause.
-		assert.Contains(t, err.Error(), "mock bq table deletion error")
-		// Importantly, ensure it does NOT contain the names of the successful dataflows.
-		assert.NotContains(t, err.Error(), "dataflow-ephemeral-gcs")
-		assert.NotContains(t, err.Error(), "dataflow-ephemeral-topics")
+	// Mock two successes and one failure for the "dataflow1" call
+	df1Resources := arch.Dataflows["dataflow1"].Resources
+	mockMsg.On("CreateResources", ctx, df1Resources).Return([]servicemanager.ProvisionedTopic{}, []servicemanager.ProvisionedSubscription{}, nil).Once()
+	mockStore.On("CreateResources", ctx, df1Resources).Return([]servicemanager.ProvisionedGCSBucket{}, storageErr).Once()
+	mockBq.On("CreateResources", ctx, df1Resources).Return([]servicemanager.ProvisionedBigQueryTable{}, []servicemanager.ProvisionedBigQueryDataset{}, nil).Once()
 
-		// Verify that all expected mock calls were made across the entire loop.
-		mockMsgClient.AssertExpectations(t)
-		mockStoreClient.AssertExpectations(t)
-		mockBqClient.AssertExpectations(t)
-		mockBqDatasetFail.AssertExpectations(t)
-		mockBqTableFail.AssertExpectations(t)
-		mockBucket2.AssertExpectations(t)
-		mockTopic1.AssertExpectations(t)
-	})
+	// Action
+	_, err := manager.SetupDataflow(ctx, arch, "dataflow1")
+
+	// Assert
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), storageErr.Error())
+	// Verify all were called, even with the error, due to concurrency
+	mockMsg.AssertExpectations(t)
+	mockStore.AssertExpectations(t)
+	mockBq.AssertExpectations(t)
+}
+
+func TestServiceManager_TeardownDataflow_Skipped(t *testing.T) {
+	manager, mockMsg, mockStore, mockBq, arch := setupServiceManagerTest(t)
+	ctx := context.Background()
+
+	// Action: Try to tear down "dataflow2", which is permanent
+	err := manager.TeardownDataflow(ctx, arch, "dataflow2")
+
+	// Assert
+	assert.NoError(t, err, "Should not return an error when skipping a non-ephemeral teardown")
+	// Assert that NO teardown methods were called
+	mockMsg.AssertNotCalled(t, "Teardown", mock.Anything, mock.Anything)
+	mockStore.AssertNotCalled(t, "Teardown", mock.Anything, mock.Anything)
+	mockBq.AssertNotCalled(t, "Teardown", mock.Anything, mock.Anything)
 }

@@ -3,245 +3,264 @@ package servicemanager_test
 import (
 	"context"
 	"errors"
-	"io"
 	"testing"
 
 	"cloud.google.com/go/iam"
+	"github.com/illmade-knight/go-iot/servicemanager"
 	"github.com/rs/zerolog"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
-	"github.com/stretchr/testify/require"
-
-	// Correctly import servicemanager
-	"github.com/illmade-knight/go-iot/servicemanager"
 )
 
-// --- Mocks for Storage Interfaces ---
+// --- Mocks ---
 
-type MockStorageClient struct {
-	mock.Mock
-}
+type MockStorageBucketHandle struct{ mock.Mock }
 
-func (m *MockStorageClient) Bucket(name string) servicemanager.StorageBucketHandle {
-	args := m.Called(name)
-	if args.Get(0) == nil {
-		return nil
-	}
-	return args.Get(0).(servicemanager.StorageBucketHandle)
-}
-
-func (m *MockStorageClient) Buckets(ctx context.Context, projectID string) servicemanager.BucketIterator {
-	args := m.Called(ctx, projectID)
-	if args.Get(0) == nil {
-		return nil
-	}
-	return args.Get(0).(servicemanager.BucketIterator)
-}
-
-func (m *MockStorageClient) Close() error {
-	args := m.Called()
-	return args.Error(0)
-}
-
-type MockBucketHandle struct {
-	mock.Mock
-}
-
-func (m *MockBucketHandle) Attrs(ctx context.Context) (*servicemanager.BucketAttributes, error) {
+func (m *MockStorageBucketHandle) Attrs(ctx context.Context) (*servicemanager.BucketAttributes, error) {
 	args := m.Called(ctx)
 	if args.Get(0) == nil {
 		return nil, args.Error(1)
 	}
 	return args.Get(0).(*servicemanager.BucketAttributes), args.Error(1)
 }
-
-func (m *MockBucketHandle) Create(ctx context.Context, projectID string, attrs *servicemanager.BucketAttributes) error {
-	args := m.Called(ctx, projectID, attrs)
-	return args.Error(0)
+func (m *MockStorageBucketHandle) Create(ctx context.Context, projectID string, attrs *servicemanager.BucketAttributes) error {
+	return m.Called(ctx, projectID, attrs).Error(0)
 }
-
-func (m *MockBucketHandle) Update(ctx context.Context, attrs servicemanager.BucketAttributesToUpdate) (*servicemanager.BucketAttributes, error) {
+func (m *MockStorageBucketHandle) Update(ctx context.Context, attrs servicemanager.BucketAttributesToUpdate) (*servicemanager.BucketAttributes, error) {
 	args := m.Called(ctx, attrs)
 	if args.Get(0) == nil {
 		return nil, args.Error(1)
 	}
 	return args.Get(0).(*servicemanager.BucketAttributes), args.Error(1)
 }
-
-func (m *MockBucketHandle) Delete(ctx context.Context) error {
-	args := m.Called(ctx)
-	return args.Error(0)
+func (m *MockStorageBucketHandle) Delete(ctx context.Context) error {
+	return m.Called(ctx).Error(0)
+}
+func (m *MockStorageBucketHandle) IAM() *iam.Handle {
+	return m.Called().Get(0).(*iam.Handle)
 }
 
-func (m *MockBucketHandle) IAM() *iam.Handle {
-	args := m.Called()
-	if args.Get(0) == nil {
-		return nil
-	}
-	return args.Get(0).(*iam.Handle)
+type MockStorageClient struct{ mock.Mock }
+
+func (m *MockStorageClient) Bucket(name string) servicemanager.StorageBucketHandle {
+	return m.Called(name).Get(0).(servicemanager.StorageBucketHandle)
+}
+func (m *MockStorageClient) Buckets(ctx context.Context, projectID string) servicemanager.BucketIterator {
+	panic("not implemented")
+}
+func (m *MockStorageClient) Close() error {
+	return m.Called().Error(0)
 }
 
-// --- Test Helper ---
+// --- Test Setup ---
+
+func setupStorageManagerTest(t *testing.T) (*servicemanager.StorageManager, *MockStorageClient) {
+	mockClient := new(MockStorageClient)
+	logger := zerolog.Nop()
+	env := servicemanager.Environment{Name: "test-env", ProjectID: "test-project"}
+	manager, err := servicemanager.NewStorageManager(mockClient, logger, env)
+	assert.NoError(t, err)
+	assert.NotNil(t, manager)
+	return manager, mockClient
+}
+
 func getTestStorageResources() servicemanager.CloudResourcesSpec {
 	return servicemanager.CloudResourcesSpec{
-		GCSBuckets: []servicemanager.GCSBucket{{
-			CloudResource: servicemanager.CloudResource{Name: "test-bucket"}},
-		}}
+		GCSBuckets: []servicemanager.GCSBucket{
+			{CloudResource: servicemanager.CloudResource{Name: "test-bucket-1"}},
+			{CloudResource: servicemanager.CloudResource{Name: "test-bucket-2"}},
+		},
+	}
 }
 
-// --- Test Cases for StorageManager ---
+// --- Tests ---
 
-func TestStorageManager_Setup_CreateNewBucket(t *testing.T) {
-	// Arrange
-	mockClient := new(MockStorageClient)
-	logger := zerolog.New(io.Discard)
-	manager, err := servicemanager.NewStorageManager(mockClient, logger)
-	require.NoError(t, err)
+func TestNewStorageManager(t *testing.T) {
+	t.Run("Success", func(t *testing.T) {
+		setupStorageManagerTest(t)
+	})
 
-	ctx := context.Background()
-	projectID := "test-proj"
-	location := "us-central1"
-	labels := map[string]string{"env": "test"}
-	resources := getTestStorageResources()
-
-	mockBucketHandle := new(MockBucketHandle)
-	mockClient.On("Bucket", "test-bucket").Return(mockBucketHandle)
-	mockBucketHandle.On("Attrs", ctx).Return(nil, errors.New("storage: bucket doesn't exist"))
-	mockBucketHandle.On("Create", ctx, projectID, mock.AnythingOfType("*servicemanager.BucketAttributes")).Return(nil)
-
-	// Act
-	err = manager.Setup(ctx, servicemanager.Environment{
-		Name:               "default",
-		ProjectID:          projectID,
-		Labels:             labels,
-		Location:           location,
-		TeardownProtection: false,
-	}, resources)
-
-	// Assert
-	assert.NoError(t, err)
-	mockClient.AssertExpectations(t)
-	mockBucketHandle.AssertExpectations(t)
+	t.Run("Nil Client", func(t *testing.T) {
+		_, err := servicemanager.NewStorageManager(nil, zerolog.Nop(), servicemanager.Environment{})
+		assert.Error(t, err)
+		assert.Contains(t, err.Error(), "storage client (StorageClient interface) cannot be nil")
+	})
 }
 
-func TestStorageManager_Teardown_Success(t *testing.T) {
-	// Arrange
-	mockClient := new(MockStorageClient)
-	logger := zerolog.New(io.Discard)
-	manager, err := servicemanager.NewStorageManager(mockClient, logger)
-	require.NoError(t, err)
-
+func TestStorageManager_CreateResources(t *testing.T) {
 	ctx := context.Background()
-	resources := servicemanager.CloudResourcesSpec{
-		GCSBuckets: []servicemanager.GCSBucket{{CloudResource: servicemanager.CloudResource{Name: "bucket-to-delete"}}}}
 
-	mockBucketHandle := new(MockBucketHandle)
-	mockClient.On("Bucket", "bucket-to-delete").Return(mockBucketHandle)
-	mockBucketHandle.On("Attrs", ctx).Return(&servicemanager.BucketAttributes{}, nil) // Bucket exists
-	mockBucketHandle.On("Delete", ctx).Return(nil)
+	t.Run("Success - Create New", func(t *testing.T) {
+		manager, mockClient := setupStorageManagerTest(t)
+		resources := getTestStorageResources()
 
-	// Act
-	err = manager.Teardown(ctx, resources) // teardownProtection is false
+		// Mocks for two new buckets
+		mockHandle1 := new(MockStorageBucketHandle)
+		mockHandle2 := new(MockStorageBucketHandle)
+		mockClient.On("Bucket", "test-bucket-1").Return(mockHandle1).Once()
+		mockClient.On("Bucket", "test-bucket-2").Return(mockHandle2).Once()
 
-	// Assert
-	assert.NoError(t, err)
-	mockClient.AssertExpectations(t)
-	mockBucketHandle.AssertExpectations(t)
+		mockHandle1.On("Attrs", ctx).Return(nil, servicemanager.Done).Once() // Not exist
+		mockHandle1.On("Create", ctx, "test-project", mock.Anything).Return(nil).Once()
+		mockHandle2.On("Attrs", ctx).Return(nil, servicemanager.Done).Once() // Not exist
+		mockHandle2.On("Create", ctx, "test-project", mock.Anything).Return(nil).Once()
+
+		provisioned, err := manager.CreateResources(ctx, resources)
+
+		assert.NoError(t, err)
+		assert.Len(t, provisioned, 2)
+		mockClient.AssertExpectations(t)
+		mockHandle1.AssertExpectations(t)
+		mockHandle2.AssertExpectations(t)
+	})
+
+	t.Run("Success - Update Existing", func(t *testing.T) {
+		manager, mockClient := setupStorageManagerTest(t)
+		resources := getTestStorageResources()
+
+		mockHandle1 := new(MockStorageBucketHandle)
+		mockClient.On("Bucket", "test-bucket-1").Return(mockHandle1).Once()
+		mockHandle1.On("Attrs", ctx).Return(&servicemanager.BucketAttributes{}, nil).Once() // Exists
+		mockHandle1.On("Update", ctx, mock.Anything).Return(&servicemanager.BucketAttributes{}, nil).Once()
+
+		mockHandle2 := new(MockStorageBucketHandle)
+		mockClient.On("Bucket", "test-bucket-2").Return(mockHandle2).Once()
+		mockHandle2.On("Attrs", ctx).Return(&servicemanager.BucketAttributes{}, nil).Once() // Exists
+		mockHandle2.On("Update", ctx, mock.Anything).Return(&servicemanager.BucketAttributes{}, nil).Once()
+
+		_, err := manager.CreateResources(ctx, resources)
+
+		assert.NoError(t, err)
+		mockHandle1.AssertNotCalled(t, "Create", mock.Anything, mock.Anything) // Ensure create is not called
+		mockClient.AssertExpectations(t)
+	})
+
+	t.Run("Partial Failure - One Fails to Create", func(t *testing.T) {
+		manager, mockClient := setupStorageManagerTest(t)
+		resources := getTestStorageResources()
+		createErr := errors.New("invalid bucket name")
+
+		mockHandle1 := new(MockStorageBucketHandle)
+		mockClient.On("Bucket", "test-bucket-1").Return(mockHandle1).Once()
+		mockHandle1.On("Attrs", ctx).Return(nil, servicemanager.Done).Once()
+		mockHandle1.On("Create", ctx, mock.Anything, mock.Anything).Return(nil).Once() // Succeeds
+
+		mockHandle2 := new(MockStorageBucketHandle)
+		mockClient.On("Bucket", "test-bucket-2").Return(mockHandle2).Once()
+		mockHandle2.On("Attrs", ctx).Return(nil, servicemanager.Done).Once()
+		mockHandle2.On("Create", ctx, mock.Anything, mock.Anything).Return(createErr).Once() // Fails
+
+		provisioned, err := manager.CreateResources(ctx, resources)
+
+		assert.Error(t, err)
+		assert.Contains(t, err.Error(), "failed to create bucket 'test-bucket-2'")
+		assert.Len(t, provisioned, 1) // Only the successful one should be returned
+		assert.Equal(t, "test-bucket-1", provisioned[0].Name)
+		mockClient.AssertExpectations(t)
+	})
 }
 
-// --- CORRECTED Test Case ---
-func TestStorageManager_Teardown_ProtectionEnabled(t *testing.T) {
-	// Arrange
-	mockClient := new(MockStorageClient)
-	logger := zerolog.New(io.Discard)
-	manager, err := servicemanager.NewStorageManager(mockClient, logger)
-	require.NoError(t, err)
-
+func TestStorageManager_Teardown(t *testing.T) {
 	ctx := context.Background()
-	// CORRECT: Explicitly set TeardownProtection to true for this test case
-	resources := servicemanager.CloudResourcesSpec{
-		GCSBuckets: []servicemanager.GCSBucket{{
-			CloudResource: servicemanager.CloudResource{
-				Name:               "protected-bucket", // Use a distinct name for clarity
-				TeardownProtection: true,               // This is the key change
-			}},
-		}}
 
-	// Act
-	err = manager.Teardown(ctx, resources)
+	t.Run("Success", func(t *testing.T) {
+		manager, mockClient := setupStorageManagerTest(t)
+		resources := getTestStorageResources()
 
-	// Assert
-	// Teardown should return no error when teardown protection is enabled for a bucket,
-	// as it simply logs a warning and skips the deletion.
-	assert.NoError(t, err)
-	// Assert that the client's Bucket method was NOT called, as it should be skipped
-	// due to teardown protection.
-	mockClient.AssertNotCalled(t, "Bucket", mock.Anything)
-	mockClient.AssertExpectations(t) // Ensure no unexpected calls occurred
-}
+		mockHandle1 := new(MockStorageBucketHandle)
+		mockClient.On("Bucket", "test-bucket-1").Return(mockHandle1).Once()
+		mockHandle1.On("Attrs", ctx).Return(&servicemanager.BucketAttributes{}, nil).Once()
+		mockHandle1.On("Delete", ctx).Return(nil).Once()
 
-// --- Test Cases for VerifyBuckets ---
+		mockHandle2 := new(MockStorageBucketHandle)
+		mockClient.On("Bucket", "test-bucket-2").Return(mockHandle2).Once()
+		mockHandle2.On("Attrs", ctx).Return(&servicemanager.BucketAttributes{}, nil).Once()
+		mockHandle2.On("Delete", ctx).Return(nil).Once()
 
-func TestStorageManager_VerifyBuckets(t *testing.T) {
-	ctx := context.Background()
-	logger := zerolog.New(io.Discard)
-	mockClient := new(MockStorageClient)
-	manager, err := servicemanager.NewStorageManager(mockClient, logger)
-	require.NoError(t, err)
+		err := manager.Teardown(ctx, resources)
 
-	t.Run("All Buckets Exist and Match Config", func(t *testing.T) {
-		bucketsToVerify := []servicemanager.GCSBucket{
-			{
-				CloudResource:     servicemanager.CloudResource{Name: "bucket-exists", Labels: map[string]string{"env": "dev"}},
-				Location:          "us-central1",
-				StorageClass:      "STANDARD",
-				VersioningEnabled: true,
-			},
-		}
-
-		mockBucket1 := new(MockBucketHandle)
-		mockClient.On("Bucket", "bucket-exists").Return(mockBucket1).Once()
-		mockBucket1.On("Attrs", ctx).Return(&servicemanager.BucketAttributes{
-			Name: "bucket-exists", Location: "US-CENTRAL1", StorageClass: "STANDARD", VersioningEnabled: true, Labels: map[string]string{"env": "dev", "project": "xyz"},
-		}, nil).Once()
-
-		err := manager.VerifyBuckets(ctx, bucketsToVerify)
 		assert.NoError(t, err)
 		mockClient.AssertExpectations(t)
-		mockBucket1.AssertExpectations(t)
 	})
 
-	t.Run("Bucket Missing", func(t *testing.T) {
-		bucketsToVerify := []servicemanager.GCSBucket{
-			{CloudResource: servicemanager.CloudResource{Name: "missing-bucket"}},
-		}
+	t.Run("Teardown Protection Enabled", func(t *testing.T) {
+		manager, mockClient := setupStorageManagerTest(t)
+		resources := getTestStorageResources()
+		resources.GCSBuckets[0].TeardownProtection = true // Protect the first bucket
 
-		mockBucket := new(MockBucketHandle)
-		mockClient.On("Bucket", "missing-bucket").Return(mockBucket).Once()
-		mockBucket.On("Attrs", ctx).Return(nil, errors.New("storage: bucket doesn't exist")).Once()
+		mockHandle2 := new(MockStorageBucketHandle)
+		mockClient.On("Bucket", "test-bucket-2").Return(mockHandle2).Once() // Expect call only for bucket 2
+		mockHandle2.On("Attrs", ctx).Return(&servicemanager.BucketAttributes{}, nil).Once()
+		mockHandle2.On("Delete", ctx).Return(nil).Once()
 
-		err := manager.VerifyBuckets(ctx, bucketsToVerify)
-		assert.Error(t, err)
-		assert.Contains(t, err.Error(), "bucket 'missing-bucket' not found during verification")
+		err := manager.Teardown(ctx, resources)
+
+		assert.NoError(t, err)
+		mockClient.AssertNotCalled(t, "Bucket", "test-bucket-1") // Ensure protected bucket is not touched
 		mockClient.AssertExpectations(t)
-		mockBucket.AssertExpectations(t)
 	})
 
-	t.Run("Location Mismatch", func(t *testing.T) {
-		bucketsToVerify := []servicemanager.GCSBucket{
-			{CloudResource: servicemanager.CloudResource{Name: "location-mismatch-bucket"}, Location: "us-east1"},
-		}
+	t.Run("Failure - Bucket Not Empty", func(t *testing.T) {
+		manager, mockClient := setupStorageManagerTest(t)
+		resources := getTestStorageResources()
+		notEmptyErr := errors.New("googleapi: Error 409: The bucket you tried to delete is not empty")
 
-		mockBucket := new(MockBucketHandle)
-		mockClient.On("Bucket", "location-mismatch-bucket").Return(mockBucket).Once()
-		mockBucket.On("Attrs", ctx).Return(&servicemanager.BucketAttributes{
-			Name: "location-mismatch-bucket", Location: "US-WEST1",
-		}, nil).Once()
+		mockHandle1 := new(MockStorageBucketHandle)
+		mockClient.On("Bucket", "test-bucket-1").Return(mockHandle1).Once()
+		mockHandle1.On("Attrs", ctx).Return(&servicemanager.BucketAttributes{}, nil).Once()
+		mockHandle1.On("Delete", ctx).Return(notEmptyErr).Once()
 
-		err := manager.VerifyBuckets(ctx, bucketsToVerify)
+		mockHandle2 := new(MockStorageBucketHandle)
+		mockClient.On("Bucket", "test-bucket-2").Return(mockHandle2).Once()
+		mockHandle2.On("Attrs", ctx).Return(&servicemanager.BucketAttributes{}, nil).Once()
+		mockHandle2.On("Delete", ctx).Return(nil).Once() // This one succeeds
+
+		err := manager.Teardown(ctx, resources)
+
 		assert.Error(t, err)
-		assert.Contains(t, err.Error(), "location mismatch: expected 'US-EAST1' (configured) vs 'US-WEST1' (actual)")
+		assert.Contains(t, err.Error(), "failed to delete bucket 'test-bucket-1' because it is not empty")
 		mockClient.AssertExpectations(t)
-		mockBucket.AssertExpectations(t)
+	})
+}
+
+func TestStorageManager_Verify(t *testing.T) {
+	ctx := context.Background()
+
+	t.Run("Success", func(t *testing.T) {
+		manager, mockClient := setupStorageManagerTest(t)
+		resources := getTestStorageResources()
+
+		mockHandle1 := new(MockStorageBucketHandle)
+		mockClient.On("Bucket", "test-bucket-1").Return(mockHandle1).Once()
+		mockHandle1.On("Attrs", ctx).Return(&servicemanager.BucketAttributes{}, nil).Once()
+
+		mockHandle2 := new(MockStorageBucketHandle)
+		mockClient.On("Bucket", "test-bucket-2").Return(mockHandle2).Once()
+		mockHandle2.On("Attrs", ctx).Return(&servicemanager.BucketAttributes{}, nil).Once()
+
+		err := manager.Verify(ctx, resources)
+
+		assert.NoError(t, err)
+		mockClient.AssertExpectations(t)
+	})
+
+	t.Run("Failure - One Bucket Missing", func(t *testing.T) {
+		manager, mockClient := setupStorageManagerTest(t)
+		resources := getTestStorageResources()
+
+		mockHandle1 := new(MockStorageBucketHandle)
+		mockClient.On("Bucket", "test-bucket-1").Return(mockHandle1).Once()
+		mockHandle1.On("Attrs", ctx).Return(&servicemanager.BucketAttributes{}, nil).Once() // Exists
+
+		mockHandle2 := new(MockStorageBucketHandle)
+		mockClient.On("Bucket", "test-bucket-2").Return(mockHandle2).Once()
+		mockHandle2.On("Attrs", ctx).Return(nil, servicemanager.Done).Once() // Does not exist
+
+		err := manager.Verify(ctx, resources)
+
+		assert.Error(t, err)
+		assert.Contains(t, err.Error(), "bucket 'test-bucket-2' not found")
+		assert.NotContains(t, err.Error(), "test-bucket-1")
+		mockClient.AssertExpectations(t)
 	})
 }

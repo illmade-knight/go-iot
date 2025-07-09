@@ -151,14 +151,10 @@ func (a *gcpMessagingClientAdapter) CreateTopicWithConfig(ctx context.Context, t
 }
 
 func (a *gcpMessagingClientAdapter) CreateSubscription(ctx context.Context, subSpec SubscriptionConfig) (MessagingSubscription, error) {
+	// The check for topic existence has been REMOVED from the adapter.
+	// This responsibility now lies solely with the MessagingManager orchestrator,
+	// which simplifies the adapter and avoids a redundant API call.
 	topic := a.client.Topic(subSpec.Topic)
-	topicExists, err := topic.Exists(ctx)
-	if err != nil {
-		return nil, fmt.Errorf("failed to check for subscription's topic '%s': %w", subSpec.Topic, err)
-	}
-	if !topicExists {
-		return nil, fmt.Errorf("cannot create subscription '%s', its topic '%s' does not exist", subSpec.Name, subSpec.Topic)
-	}
 
 	gcpConfig := pubsub.SubscriptionConfig{
 		Topic:             topic,
@@ -170,8 +166,8 @@ func (a *gcpMessagingClientAdapter) CreateSubscription(ctx context.Context, subS
 	}
 	if subSpec.RetryPolicy != nil {
 		gcpConfig.RetryPolicy = &pubsub.RetryPolicy{
-			MinimumBackoff: subSpec.RetryPolicy.MinimumBackoff,
-			MaximumBackoff: subSpec.RetryPolicy.MaximumBackoff,
+			MinimumBackoff: time.Duration(subSpec.RetryPolicy.MinimumBackoff), // Ensure correct type conversion
+			MaximumBackoff: time.Duration(subSpec.RetryPolicy.MaximumBackoff), // Ensure correct type conversion
 		}
 	}
 
@@ -181,6 +177,7 @@ func (a *gcpMessagingClientAdapter) CreateSubscription(ctx context.Context, subS
 	}
 	return &gcpSubscriptionAdapter{sub: s}, nil
 }
+
 func (a *gcpMessagingClientAdapter) Close() error { return a.client.Close() }
 
 // Validate checks the resource configuration against Google Pub/Sub specific rules.

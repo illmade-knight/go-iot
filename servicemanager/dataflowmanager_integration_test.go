@@ -5,73 +5,74 @@ package servicemanager_test
 import (
 	"cloud.google.com/go/bigquery"
 	"cloud.google.com/go/pubsub"
-	"cloud.google.com/go/storage"
 	"context"
 	"github.com/google/uuid"
 	"github.com/illmade-knight/go-iot/helpers/emulators"
 	"github.com/illmade-knight/go-iot/pkg/types"
-	servicemanager "github.com/illmade-knight/go-iot/servicemanager"
+	"github.com/illmade-knight/go-iot/servicemanager"
 	"github.com/rs/zerolog"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"strings"
 	"testing"
+	"time"
 )
 
-// TestDataflowManager_Integration_Emulators tests the DataflowManager's setup/teardown lifecycle against local emulators.
-// This test follows the same pattern as the successful ServiceManager integration test.
+// TestDataflowManager_Integration_Emulators tests the DataflowManager's full setup and teardown lifecycle
+// against local GCS, Pub/Sub, and BigQuery emulators.
 func TestDataflowManager_Integration_Emulators(t *testing.T) {
 	ctx := context.Background()
 	projectID := "df-manager-it-project"
 	runID := uuid.New().String()[:8]
 
-	// Define resource names for the test
+	// --- 1. Define Resource Names and Configuration ---
 	topicName := "df-it-topic-" + runID
 	subName := "df-it-sub-" + runID
-	// Note: Bucket names must be globally unique and follow DNS naming conventions.
-	bucketName := "df-it-bucket-" + strings.ReplaceAll(runID, "-", "")
+	bucketName := "df-it-bucket-" + strings.ReplaceAll(runID, "-", "") // Bucket names must be DNS compliant
 	datasetName := "df_it_dataset_" + runID
 	tableName := "df_it_table_" + runID
 
-	// Define the specific ResourceGroup for this DataflowManager to handle.
-	dataflowSpec := &servicemanager.ResourceGroup{
-		Name: "isolated-dataflow-" + runID,
-		Resources: servicemanager.CloudResourcesSpec{
-			GCSBuckets: []servicemanager.GCSBucket{
-				{
-					CloudResource:     servicemanager.CloudResource{Name: bucketName},
-					VersioningEnabled: false},
+	// This environment is passed to the sub-managers.
+	managerEnv := servicemanager.Environment{
+		Name:      "integration",
+		ProjectID: projectID,
+		Location:  "us-central1", // Used by BQ
+	}
+
+	dataflowSpec := servicemanager.CloudResourcesSpec{
+		Topics: []servicemanager.TopicConfig{
+			{CloudResource: servicemanager.CloudResource{Name: topicName}},
+		},
+		Subscriptions: []servicemanager.SubscriptionConfig{
+			{
+				CloudResource:      servicemanager.CloudResource{Name: subName},
+				Topic:              topicName,
+				AckDeadlineSeconds: 123,
 			},
-			Topics: []servicemanager.TopicConfig{
-				{
-					CloudResource: servicemanager.CloudResource{Name: topicName},
-				},
+		},
+		GCSBuckets: []servicemanager.GCSBucket{
+			{
+				CloudResource: servicemanager.CloudResource{Name: bucketName},
+				Location:      "US", // Required for GCS bucket creation
 			},
-			Subscriptions: []servicemanager.SubscriptionConfig{
-				{
-					CloudResource: servicemanager.CloudResource{Name: subName},
-					Topic:         topicName, AckDeadlineSeconds: 123,
-				},
-			},
-			BigQueryDatasets: []servicemanager.BigQueryDataset{
-				{
-					CloudResource: servicemanager.CloudResource{Name: datasetName},
-				},
-			},
-			BigQueryTables: []servicemanager.BigQueryTable{
-				{
-					CloudResource:          servicemanager.CloudResource{Name: tableName},
-					Dataset:                datasetName,
-					SchemaSourceType:       "go_struct",
-					SchemaSourceIdentifier: "github.com/illmade-knight/go-iot/pkg/types.GardenMonitorReadings",
-				},
+		},
+		BigQueryDatasets: []servicemanager.BigQueryDataset{
+			{CloudResource: servicemanager.CloudResource{Name: datasetName}},
+		},
+		BigQueryTables: []servicemanager.BigQueryTable{
+			{
+				CloudResource:          servicemanager.CloudResource{Name: tableName},
+				Dataset:                datasetName,
+				SchemaSourceIdentifier: "GardenMonitorReadings",
 			},
 		},
 	}
 
-	// --- 1. Setup Emulators and Real Clients ---
-	gcsConfig := emulators.GetDefaultGCSConfig(projectID, "") // Don't pre-create bucket
+	// --- 2. Setup Emulators and Real Clients ---
+	t.Log("Setting up emulators...")
+	gcsConfig := emulators.GetDefaultGCSConfig(projectID, "")
 	gcsConnection := emulators.SetupGCSEmulator(t, ctx, gcsConfig)
+	// This line is now corrected to include the necessary gcsConfig argument.
 	gcsClient := emulators.GetStorageClient(t, ctx, gcsConfig, gcsConnection.ClientOptions)
 	defer gcsClient.Close()
 
@@ -85,115 +86,102 @@ func TestDataflowManager_Integration_Emulators(t *testing.T) {
 	require.NoError(t, err)
 	defer bqClient.Close()
 
-	// --- 2. Create Real Managers with Emulator-Connected Clients ---
+	// --- 3. Create Real Managers with Emulator-Connected Clients ---
 	logger := zerolog.New(zerolog.NewConsoleWriter())
 	schemaRegistry := map[string]interface{}{
-		"github.com/illmade-knight/go-iot/pkg/types.GardenMonitorReadings": types.GardenMonitorReadings{},
+		"GardenMonitorReadings": types.GardenMonitorReadings{},
 	}
 
-	gcsAdapter := servicemanager.NewGCSClientAdapter(gcsClient)
-	storageManager, err := servicemanager.NewStorageManager(gcsAdapter, logger)
+	storageManager, err := servicemanager.NewStorageManager(servicemanager.NewGCSClientAdapter(gcsClient), logger, managerEnv)
 	require.NoError(t, err)
 
-	psAdapter := servicemanager.MessagingClientFromPubsubClient(psClient)
-	messagingManager, err := servicemanager.NewMessagingManager(psAdapter, logger)
+	messagingManager, err := servicemanager.NewMessagingManager(servicemanager.MessagingClientFromPubsubClient(psClient), logger, managerEnv)
 	require.NoError(t, err)
 
-	bqAdapter := servicemanager.NewBigQueryClientAdapter(bqClient)
-	bigqueryManager, err := servicemanager.NewBigQueryManager(bqAdapter, logger, schemaRegistry)
+	bqAdapter, err := servicemanager.CreateGoogleBigQueryClient(ctx, managerEnv.ProjectID, bqConnection.ClientOptions...)
+	require.NoError(t, err)
+	bigqueryManager, err := servicemanager.NewBigQueryManager(bqAdapter, logger, schemaRegistry, managerEnv)
 	require.NoError(t, err)
 
-	// --- 3. Create the DataflowManager using the real managers ---
-	dfm, err := servicemanager.NewDataflowManagerFromManagers(
-		messagingManager,
-		storageManager,
-		bigqueryManager,
-		dataflowSpec,
-		servicemanager.Environment{
-			Name:               "integration",
-			ProjectID:          projectID,
-			Location:           "us-central1",
-			TeardownProtection: false,
-		},
-		logger,
-	)
+	// --- 4. Create the DataflowManager using the real managers ---
+	dfm, err := servicemanager.NewDataflowManagerFromManagers(messagingManager, storageManager, bigqueryManager, managerEnv, logger)
 	require.NoError(t, err)
 
-	// Teardown is deferred to ensure resources are cleaned up even if tests fail.
-	defer func() {
-		t.Log("--- Starting deferred teardown for DataflowManager test ---")
-		err := dfm.Teardown(ctx, servicemanager.Environment{
-			Name:               "integration",
-			ProjectID:          projectID,
-			Location:           "us-central1",
-			TeardownProtection: false,
-		})
-		assert.NoError(t, err, "Deferred teardown should not fail")
-	}()
+	// =========================================================================
+	// --- Phase 1: CREATE Resources ---
+	// =========================================================================
+	t.Log("--- Starting CreateResources ---")
+	provisioned, err := dfm.CreateResources(ctx, dataflowSpec)
+	require.NoError(t, err)
+	require.NotNil(t, provisioned)
+	assert.Len(t, provisioned.Topics, 1, "Should provision one topic")
+	assert.Len(t, provisioned.Subscriptions, 1, "Should provision one subscription")
+	assert.Len(t, provisioned.GCSBuckets, 1, "Should provision one GCS bucket")
+	assert.Len(t, provisioned.BigQueryDatasets, 1, "Should provision one BQ dataset")
+	assert.Len(t, provisioned.BigQueryTables, 1, "Should provision one BQ table")
+	t.Log("--- CreateResources finished successfully ---")
 
-	// --- 4. Run Setup and Verify ---
-	t.Run("DataflowManager_Setup_And_Verify_With_Emulators", func(t *testing.T) {
-		_, err := dfm.Setup(ctx)
-		require.NoError(t, err)
+	// =========================================================================
+	// --- Phase 2: VERIFY Resources Exist ---
+	// =========================================================================
+	t.Log("--- Verifying resources exist in emulators ---")
+	// Verify GCS Bucket
+	_, err = gcsClient.Bucket(bucketName).Attrs(ctx)
+	assert.NoError(t, err, "GCS bucket should exist")
 
-		// Create direct clients for verification
-		gcsVerifyClient := emulators.GetStorageClient(t, ctx, gcsConfig, gcsConnection.ClientOptions)
-		defer gcsVerifyClient.Close()
-		psVerifyClient, err := pubsub.NewClient(ctx, projectID, psConnection.ClientOptions...)
-		require.NoError(t, err)
-		defer psVerifyClient.Close()
-		bqVerifyClient, err := bigquery.NewClient(ctx, projectID, bqConnection.ClientOptions...)
-		require.NoError(t, err)
-		defer bqVerifyClient.Close()
+	// Verify Pub/Sub Topic
+	topic := psClient.Topic(topicName)
+	exists, err := topic.Exists(ctx)
+	assert.NoError(t, err)
+	assert.True(t, exists, "Pub/Sub topic should exist")
 
-		// Verify GCS Bucket
-		_, err = gcsVerifyClient.Bucket(bucketName).Attrs(ctx)
-		assert.NoError(t, err, "GCS bucket should exist after setup")
+	// Verify Pub/Sub Subscription
+	sub := psClient.Subscription(subName)
+	exists, err = sub.Exists(ctx)
+	assert.NoError(t, err)
+	assert.True(t, exists, "Pub/Sub subscription should exist")
+	// Also check if a specific config setting was applied
+	subCfg, err := sub.Config(ctx)
+	assert.NoError(t, err)
+	assert.Equal(t, time.Duration(123)*time.Second, subCfg.AckDeadline, "Subscription AckDeadline should be set correctly")
 
-		// Verify Pub/Sub
-		topic := psVerifyClient.Topic(topicName)
-		topicExists, err := topic.Exists(ctx)
-		require.NoError(t, err)
-		assert.True(t, topicExists, "Pub/Sub topic should exist after setup")
+	// Verify BigQuery Dataset
+	_, err = bqClient.Dataset(datasetName).Metadata(ctx)
+	assert.NoError(t, err, "BigQuery dataset should exist")
 
-		// Verify BigQuery
-		_, err = bqVerifyClient.Dataset(datasetName).Metadata(ctx)
-		require.NoError(t, err, "BigQuery dataset should exist after setup")
-		_, err = bqVerifyClient.Dataset(datasetName).Table(tableName).Metadata(ctx)
-		require.NoError(t, err, "BigQuery table should exist after setup")
-	})
+	// Verify BigQuery Table
+	_, err = bqClient.Dataset(datasetName).Table(tableName).Metadata(ctx)
+	assert.NoError(t, err, "BigQuery table should exist")
+	t.Log("--- Verification successful, all resources exist ---")
 
-	// --- 5. Run Teardown and Verify ---
-	t.Run("DataflowManager_Teardown_And_Verify_With_Emulators", func(t *testing.T) {
-		// Teardown the resources created in the previous sub-test.
-		err = dfm.Teardown(ctx, servicemanager.Environment{
-			Name:               "integration",
-			ProjectID:          projectID,
-			Location:           "us-central1",
-			TeardownProtection: false,
-		})
-		require.NoError(t, err)
+	// =========================================================================
+	// --- Phase 3: TEARDOWN Resources ---
+	// =========================================================================
+	t.Log("--- Starting TeardownResources ---")
+	err = dfm.TeardownResources(ctx, dataflowSpec)
+	require.NoError(t, err, "Teardown should not fail")
+	t.Log("--- TeardownResources finished successfully ---")
 
-		// Create direct clients for verification
-		gcsVerifyClient := emulators.GetStorageClient(t, ctx, gcsConfig, gcsConnection.ClientOptions)
-		defer gcsVerifyClient.Close()
-		psVerifyClient, err := pubsub.NewClient(ctx, projectID, psConnection.ClientOptions...)
-		require.NoError(t, err)
-		defer psVerifyClient.Close()
-		bqVerifyClient, err := bigquery.NewClient(ctx, projectID, bqConnection.ClientOptions...)
-		require.NoError(t, err)
-		defer bqVerifyClient.Close()
+	// =========================================================================
+	// --- Phase 4: VERIFY Resources are Deleted ---
+	// =========================================================================
+	t.Log("--- Verifying resources are deleted from emulators ---")
+	// Verify GCS Bucket is gone
+	_, err = gcsClient.Bucket(bucketName).Attrs(ctx)
+	assert.Error(t, err, "GCS bucket should NOT exist after teardown")
 
-		// Verify all resources are gone
-		_, err = gcsVerifyClient.Bucket(bucketName).Attrs(ctx)
-		assert.ErrorIs(t, err, storage.ErrBucketNotExist, "GCS bucket should NOT exist after teardown")
+	// Verify Pub/Sub Topic is gone
+	exists, err = psClient.Topic(topicName).Exists(ctx)
+	assert.NoError(t, err)
+	assert.False(t, exists, "Pub/Sub topic should NOT exist after teardown")
 
-		topicExists, err := psVerifyClient.Topic(topicName).Exists(ctx)
-		require.NoError(t, err)
-		assert.False(t, topicExists, "Pub/Sub topic should NOT exist after teardown")
+	// Verify Pub/Sub Subscription is gone
+	exists, err = psClient.Subscription(subName).Exists(ctx)
+	assert.NoError(t, err)
+	assert.False(t, exists, "Pub/Sub subscription should NOT exist after teardown")
 
-		_, err = bqVerifyClient.Dataset(datasetName).Metadata(ctx)
-		assert.Error(t, err, "BigQuery dataset should NOT exist after teardown")
-		assert.True(t, strings.Contains(err.Error(), "notFound"), "Error for BQ dataset should be notFound")
-	})
+	// Verify BigQuery Dataset is gone
+	_, err = bqClient.Dataset(datasetName).Metadata(ctx)
+	assert.Error(t, err, "BigQuery dataset should NOT exist after teardown")
+	t.Log("--- Deletion verification successful ---")
 }

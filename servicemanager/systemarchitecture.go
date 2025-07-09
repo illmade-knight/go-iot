@@ -180,3 +180,40 @@ func (d *Duration) UnmarshalYAML(value *yaml.Node) error {
 	*d = Duration(parsed)
 	return nil
 }
+
+// ProvisionedTopic holds details of a created topic.
+type ProvisionedTopic struct {
+	Name            string
+	ProducerService string
+}
+
+// ProvisionedSubscription holds details of a created Pub/Sub subscription.
+type ProvisionedSubscription struct {
+	Name  string
+	Topic string
+}
+
+// ProvisionedGCSBucket holds details of a created GCS bucket.
+type ProvisionedGCSBucket struct {
+	Name string
+}
+
+// ProvisionedBigQueryDataset holds details of a created BigQuery dataset.
+type ProvisionedBigQueryDataset struct {
+	Name string
+}
+
+// ProvisionedBigQueryTable holds details of a created BigQuery table.
+type ProvisionedBigQueryTable struct {
+	Dataset string
+	Name    string
+}
+
+// ProvisionedResources contains the details of all resources created by a setup operation.
+type ProvisionedResources struct {
+	Topics           []ProvisionedTopic
+	Subscriptions    []ProvisionedSubscription
+	GCSBuckets       []ProvisionedGCSBucket
+	BigQueryDatasets []ProvisionedBigQueryDataset
+	BigQueryTables   []ProvisionedBigQueryTable
+}
