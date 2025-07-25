@@ -1,6 +1,14 @@
 # go-iot
 a golang iot library derived from our ml agent experiments
 
+## deprecated
+the code in here has been reused in non-iot specific repositories and will not be maintained here see
+
+* [https://github.com/illmade-knight/go-dataflow](https://github.com/illmade-knight/go-dataflow)
+* [https://github.com/illmade-knight/go-test](https://github.com/illmade-knight/go-test)
+
+## the project
+
 pkg has reusable elements that can be combined to form iot microservice pipelines
 
 to see a pipeline example see the [gardenmonitor](https://github.com/illmade-knight/go-iot-dataflows/tree/main/gardenmonitor)
